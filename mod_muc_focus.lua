@@ -69,6 +69,7 @@ module:add_feature(xmlns_colibri);
 module:add_feature(xmlns_jingle);
 module:add_feature(xmlns_jingle_ice);
 module:add_feature(xmlns_jingle_rtp);
+module:add_feature(xmlns_jingle_dtls);
 module:add_feature(xmlns_mmuc);
 
 -- we need an array that associates a room with a conference ID
@@ -156,15 +157,53 @@ module:hook("muc-occupant-left", handle_leave, 2);
 --
 local function handle_colibri(event)
         local stanza = event.stanza
+        if stanza.attr.type ~= "result" then return; end
+        -- FIXME: actually the bridge sends funny set's sometimes
+        if stanza:get_child("conference", xmlns_colibri) == nil then return; end
+
         log("debug", "handle_colibri %s", tostring(event.stanza))
         log("debug", "%s %s %s", stanza.attr.from, stanza.attr.to, stanza.attr.type)
-        -- FIXME: ignore non-results
         local conf = stanza:find("{" .. xmlns_colibri .."}conference");
         local confid = conf.attr.id;
         log("debug", "conf id %s", confid)
 
+
         -- the point is to create a jingle offer from this. at least for results of a 
         -- channel create
+
+        local roomjid = stanza.attr.to
+        -- FIXME: get_room_from_jid from the muc module? how do we know our muc module?
+        local sid = "a73sjjvkla37jfea" -- should be a random string
+        local initiate = st.iq({ from = roomjid, to = "juliet@capulet.lit/balcony", type = "set" })
+            :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
+                :tag("content", { creator = "initiator", name = "voice", senders = "both" })
+                    -- FIXME add the static offer stuff for audio
+                    :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
+                        :tag("payload-type", { id = "96", name = "speex", clockrate = "16000" }):up()
+                        :tag("payload-type", { id = "97", name = "speex", clockrate = "8000" }):up()
+                        :tag("payload-type", { id = "18" }):up()
+                        :tag("payload-type", { id = "103", name = "L16", clockrate = "16000" }):up()
+                        :tag("payload-type", { id = "98", name = "x-ISAC", clockrate = "8000" }):up()
+                        -- FIXME: a=extmap
+                    :up()
+                    :tag("transport", { xmlns = "urn:xmpp:jingle:transports:ice-udp:1", pwd = "asd88fgpdd777uzjYhagZg", ufrag = "8hhy" })
+                        :tag("candidate", { component = "1", foundation = "1", generation = "0", id = "el0747fg11", ip = "10.0.1.1", network = "1", port = "8998", protocol = "udp", type = "host" }):up()
+                        :tag("candidate", { component = "1", generation = "0", network = "1", port = "45664", priority = "1694498815", protocol = "udp", ["rel-addr"] = "10.0.1.1", ["rel-port"] = "8998", type = "srflx" }):up()
+                    :up()
+                :up()
+                :tag("content", { creator = "initiator", name = "video", senders = "both" })
+                    -- FIXME add the static offer stuff for video
+                    :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
+                        -- FIXME: a=extmap
+                        -- FIXME: a=rtcp-fb
+                    :up()
+                :up()
+            :up()
+        :up()
+
+        -- iterating the result
+        -- should actually be inserting stuff into the offer
+        -- or the static parts of the offer get inserted here?
         for content in conf:childtags("content", xmlns_colibri) do
             log("debug", "  content name %s", content.attr.name)
             for channel in content:childtags("channel", xmlns_colibri) do
@@ -196,15 +235,17 @@ local function handle_colibri(event)
         -- if receive conference with known ID but unknown channel ID...
         return true
 end
---module:hook("iq/bare/http://jitsi.org/protocol/colibri:conference", handle_colibri, 2);
 module:hook("iq/bare", handle_colibri, 2);
 
 local function handle_jingle(event)
         -- process incoming Jingle stanzas from clients
         local session, stanza = event.origin, event.stanza;
+        if stanza:get_child("jingle", xmlns_jingle) == nil then return; end
+        log("debug", "handle_jingle %s %s", tostring(session), tostring(stanza))
+        return true;
         --log("info", ("sending a Jingle invitation to the following participant: " .. origin.from));
 end
-module:hook("iq/bare/urn:xmpp:jingle:1", handle_jingle, 2);
+module:hook("iq/bare", handle_jingle, 2);
 
 --
 -- end Jingle functions

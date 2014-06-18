@@ -62,6 +62,8 @@ local xmlns_jingle = "urn:xmpp:jingle:1";
 local xmlns_jingle_ice = "urn:xmpp:jingle:transports:ice-udp:1";
 local xmlns_jingle_dtls = "urn:xmpp:jingle:apps:dtls:0";
 local xmlns_jingle_rtp = "urn:xmpp:jingle:apps:rtp:1";
+local xmlns_jingle_rtp_headerext = "urn:xmpp:jingle:apps:rtp:rtp-hdrext";
+local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_mmuc = "urn:xmpp:mmuc:0";
 
 -- advertise features
@@ -93,6 +95,10 @@ end
 -- not in prosody-trunk? but we dont want to create the conference on room creation anyway
 --module:hook("muc-room-created", create_conference, 2);
 
+
+local dirtyhack_room;
+local dirtyhack_conf;
+local dirtyhack_channels = {}
 --
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
@@ -103,6 +109,7 @@ local function handle_join(event)
 		log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza));
 
+        dirtyhack = room;
         -- if there are now two occupants, create a conference
         -- look at room._occupants size?
         log("debug", "handle join #occupants %s %d", tostring(room._occupants), count);
@@ -133,7 +140,6 @@ local function handle_join(event)
                     :tag("channel", { initiator = "true" }):up():up()
             :up():up()
 
-        module:log("debug", "to bridge %s", tostring(confcreate))
         module:send(confcreate);
         return true;
 end
@@ -157,14 +163,17 @@ module:hook("muc-occupant-left", handle_leave, 2);
 --
 local function handle_colibri(event)
         local stanza = event.stanza
-        if stanza.attr.type ~= "result" then return; end
+
         -- FIXME: actually the bridge sends funny set's sometimes
-        if stanza:get_child("conference", xmlns_colibri) == nil then return; end
+        if stanza.attr.type ~= "result" then return; end
+        local conf = stanza:get_child("conference", xmlns_colibri)
+        if conf == nil then return; end
 
         log("debug", "handle_colibri %s", tostring(event.stanza))
         log("debug", "%s %s %s", stanza.attr.from, stanza.attr.to, stanza.attr.type)
-        local conf = stanza:find("{" .. xmlns_colibri .."}conference");
-        local confid = conf.attr.id;
+        local confid = conf.attr.id
+        if dirtyhack_conf then return true; end -- FIXME: needs to handle results to updates as well
+        dirtyhack_conf = confid
         log("debug", "conf id %s", confid)
 
 
@@ -176,30 +185,6 @@ local function handle_colibri(event)
         local sid = "a73sjjvkla37jfea" -- should be a random string
         local initiate = st.iq({ from = roomjid, to = "juliet@capulet.lit/balcony", type = "set" })
             :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
-                :tag("content", { creator = "initiator", name = "voice", senders = "both" })
-                    -- FIXME add the static offer stuff for audio
-                    :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
-                        :tag("payload-type", { id = "96", name = "speex", clockrate = "16000" }):up()
-                        :tag("payload-type", { id = "97", name = "speex", clockrate = "8000" }):up()
-                        :tag("payload-type", { id = "18" }):up()
-                        :tag("payload-type", { id = "103", name = "L16", clockrate = "16000" }):up()
-                        :tag("payload-type", { id = "98", name = "x-ISAC", clockrate = "8000" }):up()
-                        -- FIXME: a=extmap
-                    :up()
-                    :tag("transport", { xmlns = "urn:xmpp:jingle:transports:ice-udp:1", pwd = "asd88fgpdd777uzjYhagZg", ufrag = "8hhy" })
-                        :tag("candidate", { component = "1", foundation = "1", generation = "0", id = "el0747fg11", ip = "10.0.1.1", network = "1", port = "8998", protocol = "udp", type = "host" }):up()
-                        :tag("candidate", { component = "1", generation = "0", network = "1", port = "45664", priority = "1694498815", protocol = "udp", ["rel-addr"] = "10.0.1.1", ["rel-port"] = "8998", type = "srflx" }):up()
-                    :up()
-                :up()
-                :tag("content", { creator = "initiator", name = "video", senders = "both" })
-                    -- FIXME add the static offer stuff for video
-                    :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
-                        -- FIXME: a=extmap
-                        -- FIXME: a=rtcp-fb
-                    :up()
-                :up()
-            :up()
-        :up()
 
         -- iterating the result
         -- should actually be inserting stuff into the offer
@@ -207,10 +192,35 @@ local function handle_colibri(event)
         for content in conf:childtags("content", xmlns_colibri) do
             log("debug", "  content name %s", content.attr.name)
             for channel in content:childtags("channel", xmlns_colibri) do
+                initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
                 log("debug", "    channel id %s", channel.attr.id)
+                dirtyhack_channels[content.attr.name] = channel.attr.id
+
+                if content.attr.name == "audio" then
+                    initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
+                        :tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
+                            :tag("parameter", { name = "minptime", value = "10" }):up()
+                        :up()
+                        :tag("payload-type", { id = "0", name = "PCMU", clockrate = "8000" }):up()
+                        :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
+
+                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
+                    :up()
+                elseif content.attr.name == "video" then
+                    initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
+                        :tag("payload-type", { id = "100", name = "vp8", clockrate = "90000" }):up()
+                        :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
+                        :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
+
+                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
+                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
+                        -- FIXME: a=rtcp-fb
+                    :up()
+                end
                 for transport in channel:childtags("transport", xmlns_jingle_ice) do
                     -- actually we just need to copy the transports
                     -- but this is so much fun
+                    initiate:add_child(transport)
                     log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
                     for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
                       log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
@@ -219,7 +229,15 @@ local function handle_colibri(event)
                       log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
                     end
                 end
+                initiate:up() -- content
             end
+        end
+        initiate:up() -- jingle
+        initiate:up()
+        log("debug", "jingle %s", tostring(initiate));
+        for jid, occupant in dirtyhack:each_occupant() do
+            log("debug", "room %s %s", tostring(jid), tostring(occupant));
+            dirtyhack:route_to_occupant(occupant, initiate)
         end
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then
@@ -240,10 +258,50 @@ module:hook("iq/bare", handle_colibri, 2);
 local function handle_jingle(event)
         -- process incoming Jingle stanzas from clients
         local session, stanza = event.origin, event.stanza;
-        if stanza:get_child("jingle", xmlns_jingle) == nil then return; end
-        log("debug", "handle_jingle %s %s", tostring(session), tostring(stanza))
-        return true;
+        local jingle = stanza:get_child("jingle", xmlns_jingle)
+        if jingle == nil then return; end
+        --log("debug", "handle_jingle %s %s", tostring(session), tostring(stanza))
         --log("info", ("sending a Jingle invitation to the following participant: " .. origin.from));
+
+        -- FIXME: this is not the in-muc from so we need to either change the handler
+        -- or look up the participant based on the real jid
+        log("debug", "handle_jingle %s from %s", jingle.attr.action, stanza.attr.from)
+        local roomjid = stanza.attr.to
+        local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
+            :tag("conference", { xmlns = "http://jitsi.org/protocol/colibri", id = dirtyhack_conf })
+--                :tag("content", { name = "audio" })
+  --                  :tag("channel", { initiator = "true" }):up():up()
+    --            :tag("content", { name = "video" })
+      --              :tag("channel", { initiator = "true" }):up():up()
+        --    :up():up()
+
+        for content in jingle:childtags("content", xmlns_jingle) do
+            log("debug", "    content name %s", content.attr.name)
+            confupdate:tag("content", { name = content.attr.name })
+            confupdate:tag("channel", { initiator = "true", id = dirtyhack_channels[content.attr.name] })
+            for description in content:childtags("description", xmlns_jingle_rtp) do
+                log("debug", "      description media %s", description.attr.media)
+                for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
+                    log("debug", "        payload name %s", payload.attr.name)
+                    confupdate:add_child(payload)
+                end
+            end
+            for transport in content:childtags("transport", xmlns_jingle_ice) do
+                log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
+                for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                  log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
+                end
+                for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
+                  log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+                end
+                confupdate:add_child(transport)
+            end
+            confupdate:up() -- channel
+            confupdate:up() -- content
+        end
+        log("debug", "send to bridge %s", tostring(confupdate))
+        module:send(confupdate);
+        return true;
 end
 module:hook("iq/bare", handle_jingle, 2);
 

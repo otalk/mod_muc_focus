@@ -44,6 +44,7 @@ MUC domain...
 -- invoke various utilities
 local st = require "util.stanza";
 local config = require "core.configmanager";
+local setmetatable = setmetatable;
 --local host = module.get_host();
 
 -- get data from the configuration file
@@ -54,7 +55,8 @@ local focus_media_bridge = module:get_option_string("focus_media_bridge");
 --local focus_content_types = module:get_option_array("focus_content_types");
 
 
-local iterators = require "util.iterators";
+local iterators = require "util.iterators"
+local serialization = require "util.serialization"
 
 -- define namespaces
 local xmlns_colibri = "http://jitsi.org/protocol/colibri";
@@ -64,6 +66,7 @@ local xmlns_jingle_dtls = "urn:xmpp:jingle:apps:dtls:0";
 local xmlns_jingle_rtp = "urn:xmpp:jingle:apps:rtp:1";
 local xmlns_jingle_rtp_headerext = "urn:xmpp:jingle:apps:rtp:rtp-hdrext";
 local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
+local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
 local xmlns_mmuc = "urn:xmpp:mmuc:0";
 
 -- advertise features
@@ -77,6 +80,19 @@ module:add_feature(xmlns_mmuc);
 -- we need an array that associates a room with a conference ID
 local conference_array = {};
 
+-- map room jid to conference id
+local roomjid2conference = {} -- should probably be roomjid2conference?
+
+-- map muc jid to room object -- we should not need this
+local jid2room = {}
+
+-- map jid to channels
+local jid2channels = {} -- should actually contain the participant muc jid or be tied to the room
+
+local participant2sources = {}
+
+-- our custom *cough* iq callback mechanism
+local callbacks = {}
 --
 -- when a MUC room is created, we request a conference on the media bridge
 --
@@ -101,10 +117,6 @@ end
 --    module:log("info", "muc room destroyed %s", event.room)
 --end)
 
-
-local dirtyhack_room;
-local dirtyhack_conf;
-local dirtyhack_channels = {}
 --
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
@@ -115,7 +127,6 @@ local function handle_join(event)
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza));
 
-        dirtyhack = room;
         -- if there are now two occupants, create a conference
         -- look at room._occupants size?
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count);
@@ -135,31 +146,51 @@ local function handle_join(event)
 --                module:send(channeladd);
 --        end
 
+        jid2room[room.jid] = room
 
-        -- for now, just create a conference for each participant and then ... initiate a jingle session with them
-        -- stanzaconv f4w
         local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
-            :tag("conference", { xmlns = "http://jitsi.org/protocol/colibri" })
-                :tag("content", { name = "audio" })
-                    :tag("channel", { initiator = "true" }):up():up()
-                :tag("content", { name = "video" })
-                    :tag("channel", { initiator = "true" }):up():up()
+        -- for now, just create a conference for each participant and then ... initiate a jingle session with them
+        if roomjid2conference[room.jid] then
+            -- update existing conference
+            -- FIXME handle -1 aka pending
+            module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
+            confcreate:tag("conference", { xmlns = "http://jitsi.org/protocol/colibri", id = roomjid2conference[room.jid] })
+        else
+            confcreate:tag("conference", { xmlns = "http://jitsi.org/protocol/colibri" })
+            roomjid2conference[room.jid] = -1 -- pending
+        end
+        confcreate:tag("content", { name = "audio" })
+                :tag("channel", { initiator = "true" }):up():up()
+            :tag("content", { name = "video" })
+                :tag("channel", { initiator = "true" }):up():up()
             :up():up()
 
         module:send(confcreate);
+        callbacks[confcreate.attr.id] = stanza.attr.from
+        module:log("debug", "send_colibri %s", tostring(confcreate))
         return true;
 end
 module:hook("muc-occupant-joined", handle_join, 2);
+-- possibly we need to hook muc-occupant-session-new instead 
+-- for cases where a participant joins with twice
 
 local function handle_leave(event)
-        local room, nick, stanza = event.room, event.nick, event.stanza
+        -- why doesn't this pass the stanza?
+        local room, nick, stanza, jid = event.room, event.nick, event.stanza, event.jid
         local count = iterators.count(room:each_occupant());
-		module:log("debug", "handle_leave %s %s %s", 
-                   tostring(room), tostring(nick), tostring(stanza));
+		module:log("debug", "handle_leave %s %s %s %s, #occupants %d", 
+                   tostring(room), tostring(nick), tostring(stanza), tostring(jid), count);
         -- same here, remove conference when there are now
         -- less than two participants in the room
         -- optimization: keep the conference a little longer
         -- to allow for fast rejoins
+
+        jid2channels[jid] = nil
+        participant2sources[jid] = nil
+        if count == 0 then
+            roomjid2conference[room.jid] = nil
+            jid2room[room.jid] = nil
+        end
         return true;
 end
 module:hook("muc-occupant-left", handle_leave, 2);
@@ -174,25 +205,42 @@ local function handle_colibri(event)
         if conf == nil then return; end
 
 
-        module:log("debug", "handle_colibri %s", tostring(event.stanza))
-        module:log("debug", "%s %s %s", stanza.attr.from, stanza.attr.to, stanza.attr.type)
         if stanza.attr.type ~= "result" then return true; end
+        module:log("debug", "%s %s %s", stanza.attr.from, stanza.attr.to, stanza.attr.type)
 
         local confid = conf.attr.id
-        if dirtyhack_conf then return true; end -- FIXME: needs to handle results to updates as well
-        dirtyhack_conf = confid
         module:log("debug", "conf id %s", confid)
 
+        local roomjid = stanza.attr.to
+        -- for now we're just interested in the result of confcreate
+        if callbacks[stanza.attr.id] == nil then return true; end
+        module:log("debug", "handle_colibri %s", tostring(event.stanza))
+
+        roomjid2conference[roomjid] = confid
+        local room = jid2room[roomjid]
+
+        local occupant_jid = callbacks[stanza.attr.id]
+        local occupant = room:get_occupant_by_real_jid(occupant_jid)
+        -- FIXME: actually we want to get a particular session of an occupant, not all of them
+        module:log("debug", "occupant is %s", tostring(occupant))
+        callbacks[stanza.attr.id] = nil
 
         -- the point is to create a jingle offer from this. at least for results of a 
         -- channel create
 
-        local roomjid = stanza.attr.to
         -- FIXME: get_room_from_jid from the muc module? how do we know our muc module?
+
         local sid = "a73sjjvkla37jfea" -- should be a random string
-        local initiate = st.iq({ from = roomjid, to = "juliet@capulet.lit/balcony", type = "set" })
+        local initiate = st.iq({ from = roomjid, type = "set" })
             :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
 
+        --module:log("debug", "MO2 %s", serialization.serialize(participant2sources))
+        jid2channels[occupant_jid] = {}
+        for jid, sources in pairs(participant2sources) do
+            for name, channel in pairs(sources) do
+                module:log("debug", "MOO2 %s %s", name, tostring(channel))
+            end
+        end
         -- iterating the result
         -- should actually be inserting stuff into the offer
         -- or the static parts of the offer get inserted here?
@@ -201,7 +249,7 @@ local function handle_colibri(event)
             for channel in content:childtags("channel", xmlns_colibri) do
                 initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
                 module:log("debug", "    channel id %s", channel.attr.id)
-                dirtyhack_channels[content.attr.name] = channel.attr.id
+                jid2channels[occupant_jid][content.attr.name] = channel.attr.id
 
                 if content.attr.name == "audio" then
                     initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
@@ -212,17 +260,33 @@ local function handle_colibri(event)
                         :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
 
                         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
-                    :up()
+                        for jid, sources in pairs(participant2sources) do
+                            if sources[content.attr.name] then
+                                module:log("debug", 'MOO %s', content.attr.name)
+                                initiate:add_child(sources[content.attr.name])
+                            end
+                        end
+                    initiate:up()
                 elseif content.attr.name == "video" then
                     initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
-                        :tag("payload-type", { id = "100", name = "vp8", clockrate = "90000" }):up()
+                        :tag("payload-type", { id = "100", name = "VP8", clockrate = "90000" })
+                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
+                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack' }):up()
+                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
+                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
+                        :up()
+                        -- FIXME: a=rtcp-fb
                         :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
                         :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
 
                         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
                         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
-                        -- FIXME: a=rtcp-fb
-                    :up()
+                        for jid, sources in pairs(participant2sources) do
+                            if sources[content.attr.name] then
+                                initiate:add_child(sources[content.attr.name])
+                            end
+                        end
+                    initiate:up()
                 end
                 for transport in channel:childtags("transport", xmlns_jingle_ice) do
                     -- actually we just need to copy the transports
@@ -241,11 +305,7 @@ local function handle_colibri(event)
         end
         initiate:up() -- jingle
         initiate:up()
-        module:log("debug", "jingle %s", tostring(initiate));
-        for jid, occupant in dirtyhack:each_occupant() do
-            module:log("debug", "room %s %s", tostring(jid), tostring(occupant));
-            dirtyhack:route_to_occupant(occupant, initiate)
-        end
+        room:route_to_occupant(occupant, initiate)
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then
 --                conference_array[id] = stanza.attr.to; -- FIXME: test first to see if the room exists?
@@ -274,18 +334,17 @@ local function handle_jingle(event)
         -- or look up the participant based on the real jid
         module:log("debug", "handle_jingle %s from %s", jingle.attr.action, stanza.attr.from)
         local roomjid = stanza.attr.to
+        local confid = roomjid2conference[roomjid]
+        module:log("debug", "confid %s", tostring(confid))
+
+        local channels = jid2channels[stanza.attr.from]
         local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
-            :tag("conference", { xmlns = "http://jitsi.org/protocol/colibri", id = dirtyhack_conf })
---                :tag("content", { name = "audio" })
-  --                  :tag("channel", { initiator = "true" }):up():up()
-    --            :tag("content", { name = "video" })
-      --              :tag("channel", { initiator = "true" }):up():up()
-        --    :up():up()
+            :tag("conference", { xmlns = "http://jitsi.org/protocol/colibri", id = confid })
 
         for content in jingle:childtags("content", xmlns_jingle) do
             module:log("debug", "    content name %s", content.attr.name)
             confupdate:tag("content", { name = content.attr.name })
-            confupdate:tag("channel", { initiator = "true", id = dirtyhack_channels[content.attr.name] })
+            confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name] })
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 module:log("debug", "      description media %s", description.attr.media)
                 for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
@@ -306,7 +365,23 @@ local function handle_jingle(event)
             confupdate:up() -- channel
             confupdate:up() -- content
         end
-        module:log("debug", "send to bridge %s", tostring(confupdate))
+
+        -- iterate again to look at the SSMA source elements
+        if participant2sources[stanza.attr.from] == nil then
+            participant2sources[stanza.attr.from] = {}
+        end
+        for content in jingle:childtags("content", xmlns_jingle) do
+            for description in content:childtags("description", xmlns_jingle_rtp) do
+                for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
+                    -- note those and add them to the participants presence
+                    -- FIXME: just the msid
+
+                    -- and also to subsequent offers (full elements)
+                    participant2sources[stanza.attr.from][content.attr.name] = source
+                    module:log("debug", "source %s content %s", source.attr.ssrc, content.attr.name)
+                end
+            end
+        end
         module:send(confupdate);
         return true;
 end

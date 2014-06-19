@@ -185,11 +185,41 @@ local function handle_leave(event)
         -- optimization: keep the conference a little longer
         -- to allow for fast rejoins
 
+        -- we might close those immediately by setting their expire to 0
+        local channels = jid2channels[jid] 
         jid2channels[jid] = nil
-        participant2sources[jid] = nil
+
+        if participant2sources[room.jid] and participant2sources[room.jid][jid] then
+            local sources = participant2sources[room.jid][jid]
+            if sources then
+                -- we need to send source-remove for these
+                module:log("debug", "source-remove")
+                local sid = "a73sjjvkla37jfea" -- should be a random string
+                local sourceremove = st.iq({ from = room.jid, type = "set" })
+                    :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "source-remove", initiator = room.jid, sid = sid })
+                for name, source in pairs(sources) do
+                    sourceremove:tag("content", { creator = "initiator", name = name, senders = "both" })
+                        :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = name })
+                            :add_child(source)
+                        :up() -- description
+                    :up() -- content
+                end
+
+                participant2sources[room.jid][jid] = nil
+
+                for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+                    if occupant_jid ~= jid then -- cant happen i think
+                        module:log("debug", "send source-remove to %s", tostring(occupant_jid))
+                        local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                        room:route_to_occupant(occupant, sourceremove)
+                    end
+                end
+            end
+        end
         if count == 0 then
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
+            participant2sources[room.jid] = nil
         end
         return true;
 end
@@ -234,12 +264,10 @@ local function handle_colibri(event)
         local initiate = st.iq({ from = roomjid, type = "set" })
             :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
 
-        --module:log("debug", "MO2 %s", serialization.serialize(participant2sources))
         jid2channels[occupant_jid] = {}
-        for jid, sources in pairs(participant2sources) do
-            for name, channel in pairs(sources) do
-                module:log("debug", "MOO2 %s %s", name, tostring(channel))
-            end
+
+        if participant2sources[room.jid] == nil then
+            participant2sources[room.jid] = {}
         end
         -- iterating the result
         -- should actually be inserting stuff into the offer
@@ -260,9 +288,9 @@ local function handle_colibri(event)
                         :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
 
                         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
-                        for jid, sources in pairs(participant2sources) do
+
+                        for jid, sources in pairs(participant2sources[room.jid]) do
                             if sources[content.attr.name] then
-                                module:log("debug", 'MOO %s', content.attr.name)
                                 initiate:add_child(sources[content.attr.name])
                             end
                         end
@@ -280,8 +308,9 @@ local function handle_colibri(event)
                         :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
 
                         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
-                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
-                        for jid, sources in pairs(participant2sources) do
+                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
+
+                        for jid, sources in pairs(participant2sources[room.jid]) do
                             if sources[content.attr.name] then
                                 initiate:add_child(sources[content.attr.name])
                             end
@@ -334,7 +363,10 @@ local function handle_jingle(event)
         -- or look up the participant based on the real jid
         module:log("debug", "handle_jingle %s from %s", jingle.attr.action, stanza.attr.from)
         local roomjid = stanza.attr.to
+        local room = jid2room[roomjid]
         local confid = roomjid2conference[roomjid]
+        local action = jingle.attr.action
+
         module:log("debug", "confid %s", tostring(confid))
 
         local channels = jid2channels[stanza.attr.from]
@@ -365,11 +397,10 @@ local function handle_jingle(event)
             confupdate:up() -- channel
             confupdate:up() -- content
         end
+        module:send(confupdate);
 
+        local sources = {}
         -- iterate again to look at the SSMA source elements
-        if participant2sources[stanza.attr.from] == nil then
-            participant2sources[stanza.attr.from] = {}
-        end
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
@@ -377,12 +408,37 @@ local function handle_jingle(event)
                     -- FIXME: just the msid
 
                     -- and also to subsequent offers (full elements)
-                    participant2sources[stanza.attr.from][content.attr.name] = source
+                    sources[content.attr.name] = source
                     module:log("debug", "source %s content %s", source.attr.ssrc, content.attr.name)
                 end
             end
         end
-        module:send(confupdate);
+        if participant2sources[room.jid] == nil then
+            participant2sources[room.jid] = {}
+        end
+        if participant2sources[room.jid][stanza.attr.from] == nil then
+            participant2sources[room.jid][stanza.attr.from] = sources
+        end
+        if action == 'session-accept' then
+            local sid = "a73sjjvkla37jfea" -- should be a random string
+            local sourceadd = st.iq({ from = roomjid, type = "set" })
+                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "source-add", initiator = roomjid, sid = sid })
+            for name, source in pairs(sources) do
+                sourceadd:tag("content", { creator = "initiator", name = name, senders = "both" })
+                    :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = name })
+                        :add_child(source)
+                    :up() -- description
+                :up() -- content
+            end
+            -- sent to everyone but the sender
+            for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+                if occupant_jid ~= stanza.attr.from then
+                    module:log("debug", "send source-add to %s", tostring(occupant_jid))
+                    local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                    room:route_to_occupant(occupant, sourceadd)
+                end
+            end
+        end
         return true;
 end
 module:hook("iq/bare", handle_jingle, 2);

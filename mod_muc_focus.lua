@@ -132,11 +132,6 @@ local function handle_join(event)
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count);
         module:log("debug", "room jid %s bridge %s", room.jid, focus_media_bridge)
 
-        -- FIXME: careful about marking this as in progress and dealing with the following scenario:
-        -- join, join, create conf iq-get, part, join, create conf iq-result
-        -- this should not trigger a new conference to be created but can reuse the created on
-        -- just with different participants
-
         -- do focus stuff only if the client can do multimedia MUC
 --        if stanza:get_child("x", xmlns_mmuc) then
 --                module:log("info", ("creating a channel for the following participant: " .. origin.from));
@@ -150,7 +145,10 @@ local function handle_join(event)
 
         local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
-        if roomjid2conference[room.jid] then
+        if roomjid2conference[room.jid] == -1 then
+            -- push to a queue that is sent once we get the callback for the
+            -- request
+        elseif roomjid2conference[room.jid] then
             -- update existing conference
             -- FIXME handle -1 aka pending
             module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
@@ -159,6 +157,11 @@ local function handle_join(event)
             confcreate:tag("conference", { xmlns = "http://jitsi.org/protocol/colibri" })
             roomjid2conference[room.jid] = -1 -- pending
         end
+        -- FIXME: careful about marking this as in progress and dealing with the following scenario:
+        -- join, join, create conf iq-get, part, join, create conf iq-result
+        -- this should not trigger a new conference to be created but can reuse the created on
+        -- just with different participants
+
         confcreate:tag("content", { name = "audio" })
                 :tag("channel", { initiator = "true" }):up():up()
             :tag("content", { name = "video" })
@@ -242,7 +245,6 @@ local function handle_colibri(event)
         module:log("debug", "conf id %s", confid)
 
         local roomjid = stanza.attr.to
-        -- for now we're just interested in the result of confcreate
         if callbacks[stanza.attr.id] == nil then return true; end
         module:log("debug", "handle_colibri %s", tostring(event.stanza))
 
@@ -288,6 +290,7 @@ local function handle_colibri(event)
                         :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
 
                         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
+                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
 
                         for jid, sources in pairs(participant2sources[room.jid]) do
                             if sources[content.attr.name] then
@@ -303,7 +306,6 @@ local function handle_colibri(event)
                             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
                             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
                         :up()
-                        -- FIXME: a=rtcp-fb
                         :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
                         :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
 
@@ -399,8 +401,10 @@ local function handle_jingle(event)
         end
         module:send(confupdate);
 
-        local sources = {}
+
         -- iterate again to look at the SSMA source elements
+        -- FIXME: only for session-accept?
+        local sources = {}
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
@@ -416,13 +420,17 @@ local function handle_jingle(event)
         if participant2sources[room.jid] == nil then
             participant2sources[room.jid] = {}
         end
-        if participant2sources[room.jid][stanza.attr.from] == nil then
-            participant2sources[room.jid][stanza.attr.from] = sources
-        end
-        if action == 'session-accept' then
+        -- FIXME handle updates and removals
+        participant2sources[room.jid][stanza.attr.from] = sources
+
+        if action == 'session-accept' or action == 'source-add' or action == 'source-remove' then
             local sid = "a73sjjvkla37jfea" -- should be a random string
+            local sendaction = action
+            if action == "source-remove" then
+                sendaction = "source-remove"
+            end
             local sourceadd = st.iq({ from = roomjid, type = "set" })
-                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "source-add", initiator = roomjid, sid = sid })
+                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = sendaction, initiator = roomjid, sid = sid })
             for name, source in pairs(sources) do
                 sourceadd:tag("content", { creator = "initiator", name = name, senders = "both" })
                     :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = name })

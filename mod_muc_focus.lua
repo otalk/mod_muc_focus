@@ -420,12 +420,12 @@ local function handle_jingle(event)
         if participant2sources[room.jid] == nil then
             participant2sources[room.jid] = {}
         end
-        -- FIXME handle updates and removals
-        participant2sources[room.jid][stanza.attr.from] = sources
 
-        if action == 'session-accept' or action == 'source-add' or action == 'source-remove' then
+        if action == 'session-accept' or action == "source-add" or action == "source-remove" then
+            -- FIXME handle updates and removals
+            participant2sources[room.jid][stanza.attr.from] = sources
             local sid = "a73sjjvkla37jfea" -- should be a random string
-            local sendaction = action
+            local sendaction = "source-add"
             if action == "source-remove" then
                 sendaction = "source-remove"
             end

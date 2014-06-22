@@ -89,6 +89,7 @@ local jid2room = {}
 -- map jid to channels
 local jid2channels = {} -- should actually contain the participant muc jid or be tied to the room
 
+-- all the a=ssrc lines
 local participant2sources = {}
 
 -- our custom *cough* iq callback mechanism
@@ -405,11 +406,16 @@ local function handle_jingle(event)
         -- iterate again to look at the SSMA source elements
         -- FIXME: only for session-accept?
         local sources = {}
+        local msid = nil
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
-                    -- note those and add them to the participants presence
-                    -- FIXME: just the msid
+                    -- note those and add the msid to the participants presence
+                    for parameter in source:childtags("parameter", xmlns_jingle_rtp_ssma) do
+                        if parameter.attr.name == "msid" then
+                            msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
+                        end
+                    end
 
                     -- and also to subsequent offers (full elements)
                     sources[content.attr.name] = source
@@ -422,6 +428,22 @@ local function handle_jingle(event)
         end
 
         if action == 'session-accept' or action == "source-add" or action == "source-remove" then
+            -- update participant presence with a <media xmlns=...><source type=audio ssrc=... direction=sendrecv/>...</media>
+            -- or the new plan to tell the MSID
+            local sender = room:get_occupant_by_real_jid(stanza.attr.from)
+            local pr = sender:get_presence()
+            if msid ~= nil then
+                pr:tag("mediastream", { xmlns = "http://andyet.net/xmlns/mmuc", msid = msid }):up()
+            end
+            --pr:tag("media", {xmlns = "http://.../ns/mjs"})
+            --for name, source in pairs(sources) do
+            --    pr:tag("source", { type = name, ssrc = source.attr.ssrc, direction = "sendrecv" }):up();
+            --end
+            sender:set_session(stanza.attr.from, pr)
+			local x = st.stanza("x", {xmlns = "http://jabber.org/protocol/muc#user";});
+            room:publicise_occupant_status(sender, x);
+
+
             -- FIXME handle updates and removals
             participant2sources[room.jid][stanza.attr.from] = sources
             local sid = "a73sjjvkla37jfea" -- should be a random string
@@ -438,10 +460,11 @@ local function handle_jingle(event)
                     :up() -- description
                 :up() -- content
             end
+
             -- sent to everyone but the sender
             for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                 if occupant_jid ~= stanza.attr.from then
-                    module:log("debug", "send source-add to %s", tostring(occupant_jid))
+                    module:log("debug", "send %s to %s", send_action, tostring(occupant_jid))
                     local occupant = room:get_occupant_by_real_jid(occupant_jid)
                     room:route_to_occupant(occupant, sourceadd)
                 end

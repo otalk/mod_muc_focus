@@ -126,12 +126,21 @@ local function handle_join(event)
         local room, nick, stanza = event.room, event.nick, event.stanza
         local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_join %s %s %s", 
-                   tostring(room), tostring(nick), tostring(stanza));
+                   tostring(room), tostring(nick), tostring(stanza))
 
         -- if there are now two occupants, create a conference
         -- look at room._occupants size?
-        module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count);
+        module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
         module:log("debug", "room jid %s bridge %s", room.jid, focus_media_bridge)
+
+		local caps = stanza:get_child("c", "http://jabber.org/protocol/caps")
+        if caps then
+            module:log("debug", "caps ver %s", caps.attr.ver)
+            -- currently jts2118m3Eaq5FILAt7qGmRc+8M= is firefox without colibri/multistream support
+            if caps.attr.ver == "jts2118m3Eaq5FILAt7qGmRc+8M=" then
+                return true
+            end
+        end
 
         -- do focus stuff only if the client can do multimedia MUC
 --        if stanza:get_child("x", xmlns_mmuc) then

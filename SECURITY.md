@@ -15,3 +15,8 @@ If we have not responded promptly we ask that you give us the benefit of the dou
 
 No security issues have been reported for this project yet.
 
+# Credits
+
+Thanks to Adam Baldwin for the explaining the importance of a SECURITY.md file:
+
+https://blog.liftsecurity.io/2013/06/02/security-md-improved-security-disclosure

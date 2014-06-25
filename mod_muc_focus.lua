@@ -53,6 +53,7 @@ local focus_mmuc = module:get_option_string("focus_mmuc"); -- all rooms do MMUC
 local focus_media_bridge = module:get_option_string("focus_media_bridge");
 -- FIXME: better to get the content types from room configuration or Jingle sessions?
 --local focus_content_types = module:get_option_array("focus_content_types");
+local focus_datachannels = true
 
 
 local iterators = require "util.iterators"
@@ -379,6 +380,28 @@ local function handle_jingle(event)
         local confid = roomjid2conference[roomjid]
         local action = jingle.attr.action
 
+        -- iterate again to look at the SSMA source elements
+        -- FIXME: only for session-accept and source-add / source-remove?
+        local sources = {}
+        -- FIXME: there could be multiple msids per participant and content
+        local msid = nil
+        for content in jingle:childtags("content", xmlns_jingle) do
+            for description in content:childtags("description", xmlns_jingle_rtp) do
+                for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
+                    -- note those and add the msid to the participants presence
+                    for parameter in source:childtags("parameter", xmlns_jingle_rtp_ssma) do
+                        if parameter.attr.name == "msid" then
+                            msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
+                        end
+                    end
+
+                    -- and also to subsequent offers (full elements)
+                    sources[content.attr.name] = source
+                    module:log("debug", "source %s content %s", source.attr.ssrc, content.attr.name)
+                end
+            end
+        end
+
         module:log("debug", "confid %s", tostring(confid))
 
         local channels = jid2channels[stanza.attr.from]
@@ -388,7 +411,7 @@ local function handle_jingle(event)
         for content in jingle:childtags("content", xmlns_jingle) do
             module:log("debug", "    content name %s", content.attr.name)
             confupdate:tag("content", { name = content.attr.name })
-            confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name] })
+            confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = msid })
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 module:log("debug", "      description media %s", description.attr.media)
                 for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
@@ -409,29 +432,10 @@ local function handle_jingle(event)
             confupdate:up() -- channel
             confupdate:up() -- content
         end
+        module:log("debug", "confupdate is %s", tostring(confupdate))
         module:send(confupdate);
 
 
-        -- iterate again to look at the SSMA source elements
-        -- FIXME: only for session-accept?
-        local sources = {}
-        local msid = nil
-        for content in jingle:childtags("content", xmlns_jingle) do
-            for description in content:childtags("description", xmlns_jingle_rtp) do
-                for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
-                    -- note those and add the msid to the participants presence
-                    for parameter in source:childtags("parameter", xmlns_jingle_rtp_ssma) do
-                        if parameter.attr.name == "msid" then
-                            msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
-                        end
-                    end
-
-                    -- and also to subsequent offers (full elements)
-                    sources[content.attr.name] = source
-                    module:log("debug", "source %s content %s", source.attr.ssrc, content.attr.name)
-                end
-            end
-        end
         if participant2sources[room.jid] == nil then
             participant2sources[room.jid] = {}
         end
@@ -473,7 +477,7 @@ local function handle_jingle(event)
             -- sent to everyone but the sender
             for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                 if occupant_jid ~= stanza.attr.from then
-                    module:log("debug", "send %s to %s", send_action, tostring(occupant_jid))
+                    module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))
                     local occupant = room:get_occupant_by_real_jid(occupant_jid)
                     room:route_to_occupant(occupant, sourceadd)
                 end

@@ -53,7 +53,7 @@ local focus_mmuc = module:get_option_string("focus_mmuc"); -- all rooms do MMUC
 local focus_media_bridge = module:get_option_string("focus_media_bridge");
 -- FIXME: better to get the content types from room configuration or Jingle sessions?
 --local focus_content_types = module:get_option_array("focus_content_types");
-local focus_datachannels = true
+local focus_datachannels = false
 
 
 local iterators = require "util.iterators"
@@ -68,6 +68,7 @@ local xmlns_jingle_rtp = "urn:xmpp:jingle:apps:rtp:1";
 local xmlns_jingle_rtp_headerext = "urn:xmpp:jingle:apps:rtp:rtp-hdrext";
 local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
+local xmlns_jingle_sctp = "urn:xmpp:jingle:transports:dtls-sctp:1";
 local xmlns_mmuc = "urn:xmpp:mmuc:0";
 
 -- advertise features
@@ -159,6 +160,7 @@ local function handle_join(event)
         if roomjid2conference[room.jid] == -1 then
             -- push to a queue that is sent once we get the callback for the
             -- request
+            module:log("debug", "FIXME new participant while conference creation is pending")
         elseif roomjid2conference[room.jid] then
             -- update existing conference
             -- FIXME handle -1 aka pending
@@ -177,7 +179,15 @@ local function handle_join(event)
                 :tag("channel", { initiator = "true" }):up():up()
             :tag("content", { name = "video" })
                 :tag("channel", { initiator = "true" }):up():up()
-            :up():up()
+        if focus_datachannels then
+            -- note: datachannels will soon not be inside content anymore
+            confcreate:tag("content", { name = "data" })
+                :tag("sctpconnection", { initiator = "true", 
+                     endpoint = nick, -- FIXME: I want the msid which i dont know here yet
+                     port = 5000 -- it should not be port, this is the sctpmap
+                }):up():up()
+        end
+        confcreate:up():up()
 
         module:send(confcreate);
         callbacks[confcreate.attr.id] = stanza.attr.from
@@ -334,6 +344,28 @@ local function handle_colibri(event)
                     -- actually we just need to copy the transports
                     -- but this is so much fun
                     initiate:add_child(transport)
+                    module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
+                    for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                        module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
+                    end
+                    for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
+                        module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+                    end
+                end
+                initiate:up() -- content
+            end
+            for channel in content:childtags("sctpconnection", xmlns_colibri) do
+                initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
+                initiate:tag("description", { xmlns = "http://talky.io/ns/datachannel" })
+                    -- no description yet. describe the channels?
+                    :up()
+                for transport in channel:childtags("transport", xmlns_jingle_ice) do
+                    -- add a XEP-0343 sctpmap element
+                    transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
+                    initiate:add_child(transport)
+
+                    -- actually we just need to copy the transports
+                    -- but this is so much fun
                     module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
                     for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
                         module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())

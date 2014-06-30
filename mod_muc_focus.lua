@@ -341,9 +341,13 @@ local function handle_colibri(event)
                     initiate:up()
                 end
                 for transport in channel:childtags("transport", xmlns_jingle_ice) do
+                    for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                        fingerprint.attr.setup = "actpass"
+                    end
+                    initiate:add_child(transport)
+
                     -- actually we just need to copy the transports
                     -- but this is so much fun
-                    initiate:add_child(transport)
                     module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
                     for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
                         module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
@@ -361,6 +365,9 @@ local function handle_colibri(event)
                     :up()
                 for transport in channel:childtags("transport", xmlns_jingle_ice) do
                     -- add a XEP-0343 sctpmap element
+                    for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                        fingerprint.attr.setup = "actpass"
+                    end
                     transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
                     initiate:add_child(transport)
 
@@ -411,6 +418,7 @@ local function handle_jingle(event)
         local room = jid2room[roomjid]
         local confid = roomjid2conference[roomjid]
         local action = jingle.attr.action
+        local sender = room:get_occupant_by_real_jid(stanza.attr.from)
 
         -- iterate again to look at the SSMA source elements
         -- FIXME: only for session-accept and source-add / source-remove?
@@ -424,6 +432,7 @@ local function handle_jingle(event)
                     for parameter in source:childtags("parameter", xmlns_jingle_rtp_ssma) do
                         if parameter.attr.name == "msid" then
                             msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
+                            module:log("debug", "msid %s content %s", msid, content.attr.name)
                         end
                     end
 
@@ -443,7 +452,11 @@ local function handle_jingle(event)
         for content in jingle:childtags("content", xmlns_jingle) do
             module:log("debug", "    content name %s", content.attr.name)
             confupdate:tag("content", { name = content.attr.name })
-            confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = msid })
+            if content.attr.name == "data" then
+                confupdate:tag("sctpconnection", { initiator = "true", endpoint = sender.nick })
+            else
+                confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = msid })
+            end
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 module:log("debug", "      description media %s", description.attr.media)
                 for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
@@ -475,7 +488,6 @@ local function handle_jingle(event)
         if action == 'session-accept' or action == "source-add" or action == "source-remove" then
             -- update participant presence with a <media xmlns=...><source type=audio ssrc=... direction=sendrecv/>...</media>
             -- or the new plan to tell the MSID
-            local sender = room:get_occupant_by_real_jid(stanza.attr.from)
             local pr = sender:get_presence()
             if msid ~= nil then
                 pr:tag("mediastream", { xmlns = "http://andyet.net/xmlns/mmuc", msid = msid }):up()

@@ -165,9 +165,9 @@ local function handle_join(event)
             -- update existing conference
             -- FIXME handle -1 aka pending
             module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
-            confcreate:tag("conference", { xmlns = "http://jitsi.org/protocol/colibri", id = roomjid2conference[room.jid] })
+            confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
         else
-            confcreate:tag("conference", { xmlns = "http://jitsi.org/protocol/colibri" })
+            confcreate:tag("conference", { xmlns = xmlns_colibri })
             roomjid2conference[room.jid] = -1 -- pending
         end
         -- FIXME: careful about marking this as in progress and dealing with the following scenario:
@@ -423,7 +423,9 @@ local function handle_jingle(event)
         -- iterate again to look at the SSMA source elements
         -- FIXME: only for session-accept and source-add / source-remove?
         local sources = {}
+
         -- FIXME: there could be multiple msids per participant and content
+        -- but we try to avoid that currently
         local msid = nil
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
@@ -447,7 +449,7 @@ local function handle_jingle(event)
 
         local channels = jid2channels[stanza.attr.from]
         local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
-            :tag("conference", { xmlns = "http://jitsi.org/protocol/colibri", id = confid })
+            :tag("conference", { xmlns = xmlns_colibri, id = confid })
 
         for content in jingle:childtags("content", xmlns_jingle) do
             module:log("debug", "    content name %s", content.attr.name)

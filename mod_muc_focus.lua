@@ -253,7 +253,7 @@ local function handle_leave(event)
                 end
             end
         end
-        if count == 0 then
+        if count == 0 then -- the room is empty
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
             participant2sources[room.jid] = nil
@@ -291,115 +291,120 @@ local function handle_colibri(event)
         module:log("debug", "occupant is %s", tostring(occupant))
         callbacks[stanza.attr.id] = nil
 
-        -- the point is to create a jingle offer from this. at least for results of a 
-        -- channel create
+        local occupants = {}
+        occupants[#occupants+1] = occupant
 
         -- FIXME: get_room_from_jid from the muc module? how do we know our muc module?
 
-        local sid = "a73sjjvkla37jfea" -- should be a random string
-        local initiate = st.iq({ from = roomjid, type = "set" })
-            :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
+        for channelnumber = 1, #occupants do
+            local sid = "a73sjjvkla37jfea" -- should be a random string
+            local initiate = st.iq({ from = roomjid, type = "set" })
+                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
 
-        jid2channels[occupant_jid] = {}
+            jid2channels[occupant_jid] = {}
 
-        if participant2sources[room.jid] == nil then
-            participant2sources[room.jid] = {}
-        end
-        -- iterating the result
-        -- should actually be inserting stuff into the offer
-        -- or the static parts of the offer get inserted here?
-        for content in conf:childtags("content", xmlns_colibri) do
-            module:log("debug", "  content name %s", content.attr.name)
-            for channel in content:childtags("channel", xmlns_colibri) do
-                initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
-                module:log("debug", "    channel id %s", channel.attr.id)
-                jid2channels[occupant_jid][content.attr.name] = channel.attr.id
+            if participant2sources[room.jid] == nil then
+                participant2sources[room.jid] = {}
+            end
+            -- iterating the result
+            -- should actually be inserting stuff into the offer
+            -- or the static parts of the offer get inserted here?
+            for content in conf:childtags("content", xmlns_colibri) do
+                module:log("debug", "  content name %s", content.attr.name)
+                local channel = nil
+                if content.attr.name == "audio" or content.attr.name == "video" then
+                    channel = iterators.to_array(content:childtags("channel", xmlns_colibri))[channelnumber]
 
-                if content.attr.name == "audio" then
-                    initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
-                        :tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
-                            :tag("parameter", { name = "minptime", value = "10" }):up()
-                        :up()
-                        :tag("payload-type", { id = "0", name = "PCMU", clockrate = "8000" }):up()
-                        :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
+                    initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
+                    module:log("debug", "    channel id %s", channel.attr.id)
+                    jid2channels[occupant_jid][content.attr.name] = channel.attr.id
 
-                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
-                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
+                    if content.attr.name == "audio" then
+                        initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
+                            :tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
+                                :tag("parameter", { name = "minptime", value = "10" }):up()
+                            :up()
+                            :tag("payload-type", { id = "0", name = "PCMU", clockrate = "8000" }):up()
+                            :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
 
-                        for jid, sources in pairs(participant2sources[room.jid]) do
-                            if sources[content.attr.name] then
-                                initiate:add_child(sources[content.attr.name])
+                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
+                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
+
+                            for jid, sources in pairs(participant2sources[room.jid]) do
+                                if sources[content.attr.name] then
+                                    initiate:add_child(sources[content.attr.name])
+                                end
                             end
-                        end
-                    initiate:up()
-                elseif content.attr.name == "video" then
-                    initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
-                        :tag("payload-type", { id = "100", name = "VP8", clockrate = "90000" })
-                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
-                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack' }):up()
-                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
-                            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
-                        :up()
-                        :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
-                        :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
+                        initiate:up()
+                    elseif content.attr.name == "video" then
+                        initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
+                            :tag("payload-type", { id = "100", name = "VP8", clockrate = "90000" })
+                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
+                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack' }):up()
+                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
+                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
+                            :up()
+                            :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
+                            :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
 
-                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
-                        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
+                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
+                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
 
-                        for jid, sources in pairs(participant2sources[room.jid]) do
-                            if sources[content.attr.name] then
-                                initiate:add_child(sources[content.attr.name])
+                            for jid, sources in pairs(participant2sources[room.jid]) do
+                                if sources[content.attr.name] then
+                                    initiate:add_child(sources[content.attr.name])
+                                end
                             end
+                        initiate:up()
+                    end
+                    for transport in channel:childtags("transport", xmlns_jingle_ice) do
+                        for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                            fingerprint.attr.setup = "actpass"
                         end
-                    initiate:up()
-                end
-                for transport in channel:childtags("transport", xmlns_jingle_ice) do
-                    for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                        fingerprint.attr.setup = "actpass"
-                    end
-                    initiate:add_child(transport)
+                        initiate:add_child(transport)
 
-                    -- actually we just need to copy the transports
-                    -- but this is so much fun
-                    module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
-                    for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                        module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
+                        -- actually we just need to copy the transports
+                        -- but this is so much fun
+                        module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
+                        for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                            module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
+                        end
+                        for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
+                            module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+                        end
                     end
-                    for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
-                        module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+                elseif content.attr.name == "data" then
+                    -- data channels are handled differently
+                    channel = iterators.to_array(content:childtags("sctpconnection", xmlns_colibri))[channelnumber]
+                    initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
+                    initiate:tag("description", { xmlns = "http://talky.io/ns/datachannel" })
+                        -- no description yet. describe the channels?
+                        :up()
+                    for transport in channel:childtags("transport", xmlns_jingle_ice) do
+                        -- add a XEP-0343 sctpmap element
+                        for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                            fingerprint.attr.setup = "actpass"
+                        end
+                        transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
+                        initiate:add_child(transport)
+
+                        -- actually we just need to copy the transports
+                        -- but this is so much fun
+                        module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
+                        for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+                            module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
+                        end
+                        for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
+                            module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+                        end
                     end
                 end
                 initiate:up() -- content
             end
-            for channel in content:childtags("sctpconnection", xmlns_colibri) do
-                initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
-                initiate:tag("description", { xmlns = "http://talky.io/ns/datachannel" })
-                    -- no description yet. describe the channels?
-                    :up()
-                for transport in channel:childtags("transport", xmlns_jingle_ice) do
-                    -- add a XEP-0343 sctpmap element
-                    for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                        fingerprint.attr.setup = "actpass"
-                    end
-                    transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
-                    initiate:add_child(transport)
-
-                    -- actually we just need to copy the transports
-                    -- but this is so much fun
-                    module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
-                    for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                        module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
-                    end
-                    for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
-                        module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
-                    end
-                end
-                initiate:up() -- content
-            end
+            initiate:up() -- jingle
+            initiate:up()
+            room:route_to_occupant(occupant, initiate)
         end
-        initiate:up() -- jingle
-        initiate:up()
-        room:route_to_occupant(occupant, initiate)
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then
 --                conference_array[id] = stanza.attr.to; -- FIXME: test first to see if the room exists?

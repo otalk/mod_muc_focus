@@ -96,6 +96,7 @@ local participant2sources = {}
 
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
+
 --
 -- when a MUC room is created, we request a conference on the media bridge
 --
@@ -177,19 +178,17 @@ local function handle_join(event)
 
         local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
-        if roomjid2conference[room.jid] == -1 then
-            -- push to a queue that is sent once we get the callback for the
-            -- request
-            module:log("debug", "FIXME new participant while conference creation is pending")
-            return true;
-        elseif roomjid2conference[room.jid] then
-            -- update existing conference
-            -- FIXME handle -1 aka pending
-            module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
-            confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
-        else
+        if roomjid2conference[room.jid] == nil then -- create a conference
             confcreate:tag("conference", { xmlns = xmlns_colibri })
             roomjid2conference[room.jid] = -1 -- pending
+        elseif roomjid2conference[room.jid] == -1 then
+            -- FIXME push to a queue that is sent once we get the callback 
+            -- for the create request
+            module:log("debug", "FIXME new participant while conference creation is pending")
+            return true;
+        else -- update existing conference
+            module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
+            confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
         end
 
         -- FIXME: careful about marking this as in progress and dealing with the following scenario:
@@ -197,13 +196,16 @@ local function handle_join(event)
         -- this should not trigger a new conference to be created but can reuse the created on
         -- just with different participants
 
-        local endpoints = {}
-        endpoints[#endpoints+1] = nick
+        local pending = {}
+        pending[#pending+1] = stanza.attr.from
+        --if count == 1 then return true;
 
+        local endpoints = { nick }
         create_channels(confcreate, endpoints)
 
         module:send(confcreate);
-        callbacks[confcreate.attr.id] = stanza.attr.from
+        callbacks[confcreate.attr.id] = pending
+        pending = {}
         module:log("debug", "send_colibri %s", tostring(confcreate))
         return true;
 end
@@ -285,14 +287,16 @@ local function handle_colibri(event)
         roomjid2conference[roomjid] = confid
         local room = jid2room[roomjid]
 
-        local occupant_jid = callbacks[stanza.attr.id]
-        local occupant = room:get_occupant_by_real_jid(occupant_jid)
-        -- FIXME: actually we want to get a particular session of an occupant, not all of them
-        module:log("debug", "occupant is %s", tostring(occupant))
+        --local occupant_jid = callbacks[stanza.attr.id]
+        local occupants = {}
+        for idx, occupant_jid in pairs(callbacks[stanza.attr.id]) do
+            -- FIXME: actually we want to get a particular session of an occupant, not all of them
+            local occupant = room:get_occupant_by_real_jid(occupant_jid)
+            module:log("debug", "occupant is %s", tostring(occupant))
+            occupants[idx] = occupant
+        end
         callbacks[stanza.attr.id] = nil
 
-        local occupants = {}
-        occupants[#occupants+1] = occupant
 
         -- FIXME: get_room_from_jid from the muc module? how do we know our muc module?
 
@@ -301,6 +305,8 @@ local function handle_colibri(event)
             local initiate = st.iq({ from = roomjid, type = "set" })
                 :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
 
+            local occupant = occupants[channelnumber]
+            local occupant_jid = occupant.jid
             jid2channels[occupant_jid] = {}
 
             if participant2sources[room.jid] == nil then

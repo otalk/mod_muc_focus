@@ -306,9 +306,7 @@ local function handle_colibri(event)
             if participant2sources[room.jid] == nil then
                 participant2sources[room.jid] = {}
             end
-            -- iterating the result
-            -- should actually be inserting stuff into the offer
-            -- or the static parts of the offer get inserted here?
+
             for content in conf:childtags("content", xmlns_colibri) do
                 module:log("debug", "  content name %s", content.attr.name)
                 local channel = nil
@@ -319,7 +317,7 @@ local function handle_colibri(event)
                     module:log("debug", "    channel id %s", channel.attr.id)
                     jid2channels[occupant_jid][content.attr.name] = channel.attr.id
 
-                    if content.attr.name == "audio" then
+                    if content.attr.name == "audio" then -- build audio descrіption
                         initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
                             :tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
                                 :tag("parameter", { name = "minptime", value = "10" }):up()
@@ -336,7 +334,7 @@ local function handle_colibri(event)
                                 end
                             end
                         initiate:up()
-                    elseif content.attr.name == "video" then
+                    elseif content.attr.name == "video" then -- build video description
                         initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
                             :tag("payload-type", { id = "100", name = "VP8", clockrate = "90000" })
                                 :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
@@ -357,35 +355,23 @@ local function handle_colibri(event)
                             end
                         initiate:up()
                     end
-                    for transport in channel:childtags("transport", xmlns_jingle_ice) do
-                        for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                            fingerprint.attr.setup = "actpass"
-                        end
-                        initiate:add_child(transport)
-
-                        -- actually we just need to copy the transports
-                        -- but this is so much fun
-                        module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
-                        for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                            module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
-                        end
-                        for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
-                            module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
-                        end
-                    end
                 elseif content.attr.name == "data" then
-                    -- data channels are handled differently
+                    -- data channels are handled differently -- currently
                     channel = iterators.to_array(content:childtags("sctpconnection", xmlns_colibri))[channelnumber]
                     initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
                     initiate:tag("description", { xmlns = "http://talky.io/ns/datachannel" })
                         -- no description yet. describe the channels?
                         :up()
+                end
+                if channel then -- add transport
                     for transport in channel:childtags("transport", xmlns_jingle_ice) do
                         -- add a XEP-0343 sctpmap element
                         for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
                             fingerprint.attr.setup = "actpass"
                         end
-                        transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
+                        if content.attr.name == "data" then
+                            transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
+                        end
                         initiate:add_child(transport)
 
                         -- actually we just need to copy the transports

@@ -53,7 +53,7 @@ local focus_mmuc = module:get_option_string("focus_mmuc"); -- all rooms do MMUC
 local focus_media_bridge = module:get_option_string("focus_media_bridge");
 -- FIXME: better to get the content types from room configuration or Jingle sessions?
 --local focus_content_types = module:get_option_array("focus_content_types");
-local focus_datachannels = false
+local focus_datachannels = true
 
 
 local iterators = require "util.iterators"
@@ -120,6 +120,33 @@ end
 --    module:log("info", "muc room destroyed %s", event.room)
 --end)
 
+local function create_channels(stanza, endpoints)
+    stanza:tag("content", { name = "audio" })
+    for i = 1,#endpoints do
+        stanza:tag("channel", { initiator = "true" }):up()
+    end
+    stanza:up()
+    
+    stanza:tag("content", { name = "video" })
+    for i = 1,#endpoints do
+        stanza:tag("channel", { initiator = "true" }):up()
+    end
+    stanza:up()
+
+    if focus_datachannels then
+        -- note: datachannels will soon not be inside content anymore
+        stanza:tag("content", { name = "data" })
+        for i = 1,#endpoints do
+            stanza:tag("sctpconnection", { initiator = "true", 
+                 endpoint = endpoints[i], -- FIXME: I want the msid which i dont know here yet
+                 port = 5000 -- it should not be port, this is the sctpmap
+            }):up()
+        end
+        stanza:up()
+    end
+    stanza:up():up()
+end
+
 --
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
@@ -135,6 +162,8 @@ local function handle_join(event)
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
         module:log("debug", "room jid %s bridge %s", room.jid, focus_media_bridge)
 
+        -- check client caps
+        -- currently hardcoded
 		local caps = stanza:get_child("c", "http://jabber.org/protocol/caps")
         if caps then
             module:log("debug", "caps ver %s", caps.attr.ver)
@@ -144,15 +173,6 @@ local function handle_join(event)
             end
         end
 
-        -- do focus stuff only if the client can do multimedia MUC
---        if stanza:get_child("x", xmlns_mmuc) then
---                module:log("info", ("creating a channel for the following participant: " .. origin.from));
---                local channeladd = st.iq({ type="set", from=room..@..host, to=focus_media_bridge }):tag("conference", { xmlns = xmlns_colibri });
---                channelad:tag("content", { name = "sights" }):up();
---                channelad:tag("content", { name = "sounds" }):up();
---                module:send(channeladd);
---        end
-
         jid2room[room.jid] = room
 
         local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
@@ -161,6 +181,7 @@ local function handle_join(event)
             -- push to a queue that is sent once we get the callback for the
             -- request
             module:log("debug", "FIXME new participant while conference creation is pending")
+            return true;
         elseif roomjid2conference[room.jid] then
             -- update existing conference
             -- FIXME handle -1 aka pending
@@ -170,24 +191,16 @@ local function handle_join(event)
             confcreate:tag("conference", { xmlns = xmlns_colibri })
             roomjid2conference[room.jid] = -1 -- pending
         end
+
         -- FIXME: careful about marking this as in progress and dealing with the following scenario:
         -- join, join, create conf iq-get, part, join, create conf iq-result
         -- this should not trigger a new conference to be created but can reuse the created on
         -- just with different participants
 
-        confcreate:tag("content", { name = "audio" })
-                :tag("channel", { initiator = "true" }):up():up()
-            :tag("content", { name = "video" })
-                :tag("channel", { initiator = "true" }):up():up()
-        if focus_datachannels then
-            -- note: datachannels will soon not be inside content anymore
-            confcreate:tag("content", { name = "data" })
-                :tag("sctpconnection", { initiator = "true", 
-                     endpoint = nick, -- FIXME: I want the msid which i dont know here yet
-                     port = 5000 -- it should not be port, this is the sctpmap
-                }):up():up()
-        end
-        confcreate:up():up()
+        local endpoints = {}
+        endpoints[#endpoints+1] = nick
+
+        create_channels(confcreate, endpoints)
 
         module:send(confcreate);
         callbacks[confcreate.attr.id] = stanza.attr.from

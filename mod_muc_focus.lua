@@ -349,7 +349,7 @@ local function handle_colibri(event)
                                 :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
                             :up()
                             :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
-                            :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
+                            --:tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
 
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
@@ -497,7 +497,7 @@ local function handle_jingle(event)
             participant2sources[room.jid] = {}
         end
 
-        if action == 'session-accept' or action == "source-add" or action == "source-remove" then
+        if action == "session-accept" or action == "source-add" or action == "source-remove" then
             -- update participant presence with a <media xmlns=...><source type=audio ssrc=... direction=sendrecv/>...</media>
             -- or the new plan to tell the MSID
             local pr = sender:get_presence()

@@ -124,13 +124,13 @@ end
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
     for i = 1,#endpoints do
-        stanza:tag("channel", { initiator = "true" }):up()
+        stanza:tag("channel", { initiator = "true", endpoint = endpoints[i] }):up()
     end
     stanza:up()
     
     stanza:tag("content", { name = "video" })
     for i = 1,#endpoints do
-        stanza:tag("channel", { initiator = "true" }):up()
+        stanza:tag("channel", { initiator = "true", endpoint = endpoints[i] }):up()
     end
     stanza:up()
 
@@ -330,6 +330,8 @@ local function handle_colibri(event)
                             :up()
                             :tag("payload-type", { id = "0", name = "PCMU", clockrate = "8000" }):up()
                             :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
+                            :tag("payload-type", { id = "103", name = "ISAC", clockrate = "16000" }):up()
+                            :tag("payload-type", { id = "104", name = "ISAC", clockrate = "32000" }):up()
 
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
@@ -467,7 +469,7 @@ local function handle_jingle(event)
             if content.attr.name == "data" then
                 confupdate:tag("sctpconnection", { initiator = "true", endpoint = sender.nick })
             else
-                confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = msid })
+                confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
             end
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 module:log("debug", "      description media %s", description.attr.media)

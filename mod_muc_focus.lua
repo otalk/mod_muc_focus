@@ -181,6 +181,7 @@ local function handle_join(event)
         if roomjid2conference[room.jid] == nil then -- create a conference
             confcreate:tag("conference", { xmlns = xmlns_colibri })
             roomjid2conference[room.jid] = -1 -- pending
+            --confcreate:tag("recording", { state = "true", token = "recordersecret" }):up() -- recording
         elseif roomjid2conference[room.jid] == -1 then
             -- FIXME push to a queue that is sent once we get the callback 
             -- for the create request
@@ -226,7 +227,11 @@ local function handle_leave(event)
 
         -- we might close those immediately by setting their expire to 0
         local channels = jid2channels[jid] 
-        jid2channels[jid] = nil
+        if channels then
+            jid2channels[jid] = nil
+        else
+            --module:log("debug", "handle_leave: no channels found")
+        end
 
         if participant2sources[room.jid] and participant2sources[room.jid][jid] then
             local sources = participant2sources[room.jid][jid]
@@ -537,7 +542,11 @@ local function handle_jingle(event)
                 if occupant_jid ~= stanza.attr.from then
                     module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))
                     local occupant = room:get_occupant_by_real_jid(occupant_jid)
-                    room:route_to_occupant(occupant, sourceadd)
+                    if (occupant) then -- FIXME: when does this happen
+                        room:route_to_occupant(occupant, sourceadd)
+                    else
+                        module:log("debug", "not found %s", sendaction)
+                    end
                 end
             end
         end

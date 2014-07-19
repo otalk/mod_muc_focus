@@ -241,11 +241,13 @@ local function handle_leave(event)
                 local sid = "a73sjjvkla37jfea" -- should be a random string
                 local sourceremove = st.iq({ from = room.jid, type = "set" })
                     :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "source-remove", initiator = room.jid, sid = sid })
-                for name, source in pairs(sources) do
+                for name, sourcelist in pairs(sources) do
                     sourceremove:tag("content", { creator = "initiator", name = name, senders = "both" })
                         :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = name })
-                            :add_child(source)
-                        :up() -- description
+                        for i, source in ipairs(sourcelist) do
+                            sourceremove:add_child(source)
+                        end
+                        sourceremove:up() -- description
                     :up() -- content
                 end
 
@@ -343,7 +345,9 @@ local function handle_colibri(event)
 
                             for jid, sources in pairs(participant2sources[room.jid]) do
                                 if sources[content.attr.name] then
-                                    initiate:add_child(sources[content.attr.name])
+                                    for i, source in ipairs(sources[content.attr.name]) do
+                                        initiate:add_child(source)
+                                    end
                                 end
                             end
                         initiate:up()
@@ -363,7 +367,9 @@ local function handle_colibri(event)
 
                             for jid, sources in pairs(participant2sources[room.jid]) do
                                 if sources[content.attr.name] then
-                                    initiate:add_child(sources[content.attr.name])
+                                    for i, source in ipairs(sources[content.attr.name]) do
+                                        initiate:add_child(source)
+                                    end
                                 end
                             end
                         initiate:up()
@@ -446,6 +452,7 @@ local function handle_jingle(event)
         local msid = nil
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
+                local sourcelist = {}
                 for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
                     -- note those and add the msid to the participants presence
                     for parameter in source:childtags("parameter", xmlns_jingle_rtp_ssma) do
@@ -456,9 +463,10 @@ local function handle_jingle(event)
                     end
 
                     -- and also to subsequent offers (full elements)
-                    sources[content.attr.name] = source
+                    sourcelist[#sourcelist+1] = source
                     module:log("debug", "source %s content %s", source.attr.ssrc, content.attr.name)
                 end
+                sources[content.attr.name] = sourcelist 
             end
         end
 
@@ -529,11 +537,14 @@ local function handle_jingle(event)
             end
             local sourceadd = st.iq({ from = roomjid, type = "set" })
                 :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = sendaction, initiator = roomjid, sid = sid })
-            for name, source in pairs(sources) do
+            for name, sourcelist in pairs(sources) do
                 sourceadd:tag("content", { creator = "initiator", name = name, senders = "both" })
                     :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = name })
-                        :add_child(source)
-                    :up() -- description
+                    for i, source in ipairs(sourcelist) do
+                        sourceadd:add_child(source)
+                    end
+
+                    sourceadd:up() -- description
                 :up() -- content
             end
 

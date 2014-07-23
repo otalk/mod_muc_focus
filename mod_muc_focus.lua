@@ -152,6 +152,9 @@ end
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
 --
+local pending = {}
+local endpoints = {}
+
 local function handle_join(event)
         local room, nick, stanza = event.room, event.nick, event.stanza
         local count = iterators.count(room:each_occupant());
@@ -174,11 +177,20 @@ local function handle_join(event)
             end
         end
 
+        -- FIXME: this doesn't allow us to clean up on leave
+        if pending[room.jid] == nil then pending[room.jid] = {}; end
+        if endpoints[room.jid] == nil then endpoints[room.jid] = {}; end
+        pending[room.jid][#pending[room.jid]+1] = stanza.attr.from
+        endpoints[room.jid][#endpoints[room.jid]+1] = nick
+        module:log("debug", "pending %d count %d", #pending[room.jid], count)
+        if count == 1 then return true; end
+
         jid2room[room.jid] = room
 
         local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
         if roomjid2conference[room.jid] == nil then -- create a conference
+            module:log("debug", "creating conference for %s", room.jid)
             confcreate:tag("conference", { xmlns = xmlns_colibri })
             roomjid2conference[room.jid] = -1 -- pending
             --confcreate:tag("recording", { state = "true", token = "recordersecret" }):up() -- recording
@@ -197,18 +209,15 @@ local function handle_join(event)
         -- this should not trigger a new conference to be created but can reuse the created on
         -- just with different participants
 
-        local pending = {}
-        pending[#pending+1] = stanza.attr.from
-        --if count == 1 then return true;
-
-        local endpoints = { nick }
-        create_channels(confcreate, endpoints)
-
+        --local pending = {}
+        --local endpoints = { nick }
+        create_channels(confcreate, endpoints[room.jid])
         module:send(confcreate);
-        callbacks[confcreate.attr.id] = pending
-        pending = {}
+        callbacks[confcreate.attr.id] = pending[room.jid]
+        pending[room.jid] = nil
+        endpoints[room.jid] = nil
         module:log("debug", "send_colibri %s", tostring(confcreate))
-        return true;
+        return true
 end
 module:hook("muc-occupant-joined", handle_join, 2);
 -- possibly we need to hook muc-occupant-session-new instead 
@@ -263,7 +272,21 @@ local function handle_leave(event)
                 end
             end
         end
-        if count == 0 then -- the room is empty
+        if count == 1 then -- the room is empty
+            -- FIXME: send session-terminate to the participant that is left
+            local sid = "a73sjjvkla37jfea" -- should be a random string
+            local terminate = st.iq({ from = room.jid, type = "set" })
+                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-terminate", initiator = room.jid, sid = sid })
+                  :tag("reason")
+                    :tag("busy"):up()
+                  :up()
+                :up()
+            for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+                local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                room:route_to_occupant(occupant, terminate)
+            end
+        end
+        if count <= 1 then
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
             participant2sources[room.jid] = nil
@@ -410,6 +433,9 @@ local function handle_colibri(event)
             initiate:up() -- jingle
             initiate:up()
             room:route_to_occupant(occupant, initiate)
+            -- FIXME: prepopulate here 
+            module:log("debug", "FIXMEREALLYHARD %s", occupant_jid);
+            participant2sources[room.jid][occupant_jid] = {}
         end
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then
@@ -552,6 +578,7 @@ local function handle_jingle(event)
             end
 
             -- sent to everyone but the sender
+            -- FIXME: need to operate on ... what?
             for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                 if occupant_jid ~= stanza.attr.from then
                     module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))

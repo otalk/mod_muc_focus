@@ -233,6 +233,7 @@ local function handle_leave(event)
             --module:log("debug", "handle_leave: no channels found")
         end
 
+        -- FIXME: needs to lookup by jid and we don't have the JID sometimes...
         if participant2sources[room.jid] and participant2sources[room.jid][jid] then
             local sources = participant2sources[room.jid][jid]
             if sources then
@@ -449,7 +450,7 @@ local function handle_jingle(event)
 
         -- FIXME: there could be multiple msids per participant and content
         -- but we try to avoid that currently
-        local msid = nil
+        local msids = {} 
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 local sourcelist = {}
@@ -457,7 +458,9 @@ local function handle_jingle(event)
                     -- note those and add the msid to the participants presence
                     for parameter in source:childtags("parameter", xmlns_jingle_rtp_ssma) do
                         if parameter.attr.name == "msid" then
-                            msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
+                            local msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
+                            -- second part is the track
+                            msids[msid] = true
                             module:log("debug", "msid %s content %s", msid, content.attr.name)
                         end
                     end
@@ -516,7 +519,7 @@ local function handle_jingle(event)
             -- update participant presence with a <media xmlns=...><source type=audio ssrc=... direction=sendrecv/>...</media>
             -- or the new plan to tell the MSID
             local pr = sender:get_presence()
-            if msid ~= nil then
+            for msid, foo in pairs(msids) do
                 pr:tag("mediastream", { xmlns = "http://andyet.net/xmlns/mmuc", msid = msid }):up()
             end
             --pr:tag("media", {xmlns = "http://.../ns/mjs"})

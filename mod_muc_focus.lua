@@ -94,6 +94,12 @@ local jid2channels = {} -- should actually contain the participant muc jid or be
 -- all the a=ssrc lines
 local participant2sources = {}
 
+-- people waiting to join
+local pending = {}
+
+-- endpoints associated with that
+local endpoints = {}
+
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
 
@@ -152,9 +158,6 @@ end
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
 --
-local pending = {}
-local endpoints = {}
-
 local function handle_join(event)
         local room, nick, stanza = event.room, event.nick, event.stanza
         local count = iterators.count(room:each_occupant());
@@ -209,8 +212,6 @@ local function handle_join(event)
         -- this should not trigger a new conference to be created but can reuse the created on
         -- just with different participants
 
-        --local pending = {}
-        --local endpoints = { nick }
         create_channels(confcreate, endpoints[room.jid])
         module:send(confcreate);
         callbacks[confcreate.attr.id] = pending[room.jid]
@@ -290,6 +291,8 @@ local function handle_leave(event)
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
             participant2sources[room.jid] = nil
+            pending[room.jid] = nil
+            endpoints[room.jid] = nil
         end
         return true;
 end
@@ -433,8 +436,8 @@ local function handle_colibri(event)
             initiate:up() -- jingle
             initiate:up()
             room:route_to_occupant(occupant, initiate)
-            -- FIXME: prepopulate here 
-            module:log("debug", "FIXMEREALLYHARD %s", occupant_jid);
+
+            -- preoccupy here
             participant2sources[room.jid][occupant_jid] = {}
         end
         -- if receive conference element with unknown ID, associate the room with this conference ID
@@ -578,7 +581,6 @@ local function handle_jingle(event)
             end
 
             -- sent to everyone but the sender
-            -- FIXME: need to operate on ... what?
             for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                 if occupant_jid ~= stanza.attr.from then
                     module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))

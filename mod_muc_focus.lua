@@ -274,7 +274,6 @@ local function handle_leave(event)
             end
         end
         if count == 1 then -- the room is empty
-            -- FIXME: send session-terminate to the participant that is left
             local sid = "a73sjjvkla37jfea" -- should be a random string
             local terminate = st.iq({ from = room.jid, type = "set" })
                 :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-terminate", initiator = room.jid, sid = sid })
@@ -286,13 +285,19 @@ local function handle_leave(event)
                 local occupant = room:get_occupant_by_real_jid(occupant_jid)
                 room:route_to_occupant(occupant, terminate)
             end
+
+            -- set remaining participant as pending
+            pending[room.jid] = {}
+            endpoints[room.jid] = {}
+            for nick, occupant in room:each_occupant() do
+                pending[room.jid][#pending[room.jid]+1] = occupant.jid
+                endpoints[room.jid][#endpoints[room.jid]+1] = nick
+            end
         end
         if count <= 1 then
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
             participant2sources[room.jid] = nil
-            pending[room.jid] = nil
-            endpoints[room.jid] = nil
         end
         return true;
 end

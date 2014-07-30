@@ -94,6 +94,12 @@ local jid2channels = {} -- should actually contain the participant muc jid or be
 -- all the a=ssrc lines
 local participant2sources = {}
 
+-- people waiting to join
+local pending = {}
+
+-- endpoints associated with that
+local endpoints = {}
+
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
 
@@ -174,11 +180,20 @@ local function handle_join(event)
             end
         end
 
+        -- FIXME: this doesn't allow us to clean up on leave
+        if pending[room.jid] == nil then pending[room.jid] = {}; end
+        if endpoints[room.jid] == nil then endpoints[room.jid] = {}; end
+        pending[room.jid][#pending[room.jid]+1] = stanza.attr.from
+        endpoints[room.jid][#endpoints[room.jid]+1] = nick
+        module:log("debug", "pending %d count %d", #pending[room.jid], count)
+        if count == 1 then return true; end
+
         jid2room[room.jid] = room
 
         local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
         if roomjid2conference[room.jid] == nil then -- create a conference
+            module:log("debug", "creating conference for %s", room.jid)
             confcreate:tag("conference", { xmlns = xmlns_colibri })
             roomjid2conference[room.jid] = -1 -- pending
             --confcreate:tag("recording", { state = "true", token = "recordersecret" }):up() -- recording
@@ -197,18 +212,13 @@ local function handle_join(event)
         -- this should not trigger a new conference to be created but can reuse the created on
         -- just with different participants
 
-        local pending = {}
-        pending[#pending+1] = stanza.attr.from
-        --if count == 1 then return true;
-
-        local endpoints = { nick }
-        create_channels(confcreate, endpoints)
-
+        create_channels(confcreate, endpoints[room.jid])
         module:send(confcreate);
-        callbacks[confcreate.attr.id] = pending
-        pending = {}
+        callbacks[confcreate.attr.id] = pending[room.jid]
+        pending[room.jid] = nil
+        endpoints[room.jid] = nil
         module:log("debug", "send_colibri %s", tostring(confcreate))
-        return true;
+        return true
 end
 module:hook("muc-occupant-joined", handle_join, 2);
 -- possibly we need to hook muc-occupant-session-new instead 
@@ -263,7 +273,28 @@ local function handle_leave(event)
                 end
             end
         end
-        if count == 0 then -- the room is empty
+        if count == 1 then -- the room is empty
+            local sid = "a73sjjvkla37jfea" -- should be a random string
+            local terminate = st.iq({ from = room.jid, type = "set" })
+                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-terminate", initiator = room.jid, sid = sid })
+                  :tag("reason")
+                    :tag("busy"):up()
+                  :up()
+                :up()
+            for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+                local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                room:route_to_occupant(occupant, terminate)
+            end
+
+            -- set remaining participant as pending
+            pending[room.jid] = {}
+            endpoints[room.jid] = {}
+            for nick, occupant in room:each_occupant() do
+                pending[room.jid][#pending[room.jid]+1] = occupant.jid
+                endpoints[room.jid][#endpoints[room.jid]+1] = nick
+            end
+        end
+        if count <= 1 then
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
             participant2sources[room.jid] = nil
@@ -410,6 +441,9 @@ local function handle_colibri(event)
             initiate:up() -- jingle
             initiate:up()
             room:route_to_occupant(occupant, initiate)
+
+            -- preoccupy here
+            participant2sources[room.jid][occupant_jid] = {}
         end
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then

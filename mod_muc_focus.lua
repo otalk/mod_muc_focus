@@ -276,11 +276,13 @@ local function handle_leave(event)
 
         -- look whether the participant leaving is on our pending list
         -- and clean that up
-        for i, value in ipairs(pending[room.jid]) do
-            if (value == jid) then
-                pending[room.jid][i] = nil
-                endpoints[room.jid][i] = nil
-                break
+        if pending[room.jid] then
+            for i, value in ipairs(pending[room.jid]) do
+                if (value == jid) then
+                    pending[room.jid][i] = nil
+                    endpoints[room.jid][i] = nil
+                    break
+                end
             end
         end
 

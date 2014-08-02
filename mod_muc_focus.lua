@@ -286,13 +286,6 @@ local function handle_leave(event)
             end
         end
 
-        if count <= 1 then
-            roomjid2conference[room.jid] = nil
-            jid2room[room.jid] = nil
-            participant2sources[room.jid] = nil
-            pending[room.jid] = nil
-            endpoints[room.jid] = nil
-        end
         if count == 1 then -- the room is empty
             local sid = "a73sjjvkla37jfea" -- should be a random string
             local terminate = st.iq({ from = room.jid, type = "set" })
@@ -313,6 +306,15 @@ local function handle_leave(event)
                 pending[room.jid][#pending[room.jid]+1] = occupant.jid
                 endpoints[room.jid][#endpoints[room.jid]+1] = nick
             end
+        end
+        if count <= 1 then
+            roomjid2conference[room.jid] = nil
+            jid2room[room.jid] = nil
+            participant2sources[room.jid] = nil
+        end
+        if count == 0 then
+            pending[room.jid] = nil
+            endpoints[room.jid] = nil
         end
         return true;
 end

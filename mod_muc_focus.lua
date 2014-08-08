@@ -243,7 +243,6 @@ local function handle_leave(event)
             --module:log("debug", "handle_leave: no channels found")
         end
 
-        -- FIXME: needs to lookup by jid and we don't have the JID sometimes...
         if participant2sources[room.jid] and participant2sources[room.jid][jid] then
             local sources = participant2sources[room.jid][jid]
             if sources then
@@ -296,7 +295,7 @@ local function handle_leave(event)
                 :up()
             for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                 local occupant = room:get_occupant_by_real_jid(occupant_jid)
-                room:route_to_occupant(occupant, terminate)
+                if occupant then room:route_to_occupant(occupant, terminate) end
             end
 
             -- set remaining participant as pending

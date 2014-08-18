@@ -103,30 +103,6 @@ local endpoints = {}
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
 
---
--- when a MUC room is created, we request a conference on the media bridge
---
-local function create_conference(event)
-        module:log("info", ("creating a conference for the following room: " .. room));
---        local confcreate = st.iq({ type="set", from=room..@..host, to=focus_media_bridge }):conference(xmlns_colibri);
-        -- FIXME: how do we determine the number and types of content?
-        -- FIXME: hardcode to audio and video for now, sigh
-        -- these aren't really media types, so we give them silly names...
---        confcreate:tag("content", { name= "sights" }):up();
---        confcreate:tag("content", { name= "sounds" }):up();
-        -- for now we don't request any channels; we'll do that as participants join
---        module:send(confcreate);
-        return true;
-end
--- not in prosody-trunk? but we dont want to create the conference on room creation anyway
--- muc-room-pre-create maybe?
---module:hook("muc-room-created", create_conference, 2);
-
--- only generated for non-persistent rooms
---module:hook("muc-room-destroyed", function(event)
---    module:log("info", "muc room destroyed %s", event.room)
---end)
-
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
     for i = 1,#endpoints do

@@ -248,7 +248,7 @@ local function handle_leave(event)
             if sources then
                 -- we need to send source-remove for these
                 module:log("debug", "source-remove")
-                local sid = "a73sjjvkla37jfea" -- should be a random string
+                local sid = roomjid2conference[room.jid] -- uses the id from the bridge
                 local sourceremove = st.iq({ from = room.jid, type = "set" })
                     :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "source-remove", initiator = room.jid, sid = sid })
                 for name, sourcelist in pairs(sources) do
@@ -286,16 +286,18 @@ local function handle_leave(event)
         end
 
         if count == 1 then -- the room is empty
-            local sid = "a73sjjvkla37jfea" -- should be a random string
+            local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local terminate = st.iq({ from = room.jid, type = "set" })
                 :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-terminate", initiator = room.jid, sid = sid })
                   :tag("reason")
                     :tag("busy"):up()
                   :up()
                 :up()
-            for occupant_jid in iterators.keys(participant2sources[room.jid]) do
-                local occupant = room:get_occupant_by_real_jid(occupant_jid)
-                if occupant then room:route_to_occupant(occupant, terminate) end
+            if participant2sources[room.jid] then
+                for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+                    local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                    if occupant then room:route_to_occupant(occupant, terminate) end
+                end
             end
 
             -- set remaining participant as pending
@@ -356,7 +358,7 @@ local function handle_colibri(event)
         -- FIXME: get_room_from_jid from the muc module? how do we know our muc module?
 
         for channelnumber = 1, #occupants do
-            local sid = "a73sjjvkla37jfea" -- should be a random string
+            local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local initiate = st.iq({ from = roomjid, type = "set" })
                 :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
 
@@ -583,7 +585,7 @@ local function handle_jingle(event)
 
             -- FIXME handle updates and removals
             participant2sources[room.jid][stanza.attr.from] = sources
-            local sid = "a73sjjvkla37jfea" -- should be a random string
+            local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local sendaction = "source-add"
             if action == "source-remove" then
                 sendaction = "source-remove"

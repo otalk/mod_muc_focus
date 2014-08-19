@@ -366,6 +366,8 @@ local function handle_colibri(event)
                             :tag("payload-type", { id = "103", name = "ISAC", clockrate = "16000" }):up()
                             :tag("payload-type", { id = "104", name = "ISAC", clockrate = "32000" }):up()
 
+                            :tag("rtcp-mux"):up()
+
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
 
@@ -388,6 +390,8 @@ local function handle_colibri(event)
                             :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
                             --:tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
 
+                            :tag("rtcp-mux"):up()
+
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
 
@@ -408,6 +412,7 @@ local function handle_colibri(event)
                         -- no description yet. describe the channels?
                         :up()
                 end
+
                 if channel then -- add transport
                     for transport in channel:childtags("transport", xmlns_jingle_ice) do
                         -- add a XEP-0343 sctpmap element
@@ -434,10 +439,11 @@ local function handle_colibri(event)
             end
             initiate:up() -- jingle
             initiate:up()
-            room:route_to_occupant(occupant, initiate)
 
             -- preoccupy here
             participant2sources[room.jid][occupant_jid] = {}
+
+            room:route_to_occupant(occupant, initiate)
         end
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then
@@ -515,12 +521,14 @@ local function handle_jingle(event)
             else
                 confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
             end
+            local hasrtcpmux = nil
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 module:log("debug", "      description media %s", description.attr.media)
                 for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
                     module:log("debug", "        payload name %s", payload.attr.name)
                     confupdate:add_child(payload)
                 end
+                hasrtcpmux = description:get_child("rtcp-mux")
             end
             for transport in content:childtags("transport", xmlns_jingle_ice) do
                 module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
@@ -529,6 +537,10 @@ local function handle_jingle(event)
                 end
                 for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
                   module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+                end
+                -- colibri puts rtcp-mux inside transport (which is probably the right thing to do)
+                if hasrtcpmux then
+                    transport:tag("rtcp-mux"):up()
                 end
                 confupdate:add_child(transport)
             end

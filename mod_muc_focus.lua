@@ -54,6 +54,7 @@ local focus_media_bridge = module:get_option_string("focus_media_bridge");
 -- FIXME: better to get the content types from room configuration or Jingle sessions?
 --local focus_content_types = module:get_option_array("focus_content_types");
 local focus_datachannels = true
+local usebundle = false -- breaks data channels in jvb-214
 
 
 local iterators = require "util.iterators"
@@ -68,6 +69,7 @@ local xmlns_jingle_rtp = "urn:xmpp:jingle:apps:rtp:1";
 local xmlns_jingle_rtp_headerext = "urn:xmpp:jingle:apps:rtp:rtp-hdrext:0";
 local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
+local xmlns_jingle_grouping = "urn:xmpp:jingle:apps:grouping:0";
 local xmlns_jingle_sctp = "urn:xmpp:jingle:transports:dtls-sctp:1";
 local xmlns_mmuc = "urn:xmpp:mmuc:0";
 
@@ -106,13 +108,13 @@ local callbacks = {}
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
     for i = 1,#endpoints do
-        stanza:tag("channel", { initiator = "true", endpoint = endpoints[i] }):up()
+        stanza:tag("channel", { initiator = "true", endpoint = endpoints[i], ["channel-bundle-id"] = (usebundle and endpoints[i] or nil) }):up()
     end
     stanza:up()
     
     stanza:tag("content", { name = "video" })
     for i = 1,#endpoints do
-        stanza:tag("channel", { initiator = "true", endpoint = endpoints[i] }):up()
+        stanza:tag("channel", { initiator = "true", endpoint = endpoints[i], ["channel-bundle-id"] = (usebundle and endpoints[i] or nil) }):up()
     end
     stanza:up()
 
@@ -122,7 +124,8 @@ local function create_channels(stanza, endpoints)
         for i = 1,#endpoints do
             stanza:tag("sctpconnection", { initiator = "true", 
                  endpoint = endpoints[i], -- FIXME: I want the msid which i dont know here yet
-                 port = 5000 -- it should not be port, this is the sctpmap
+                 port = 5000, -- it should not be port, this is the sctpmap
+                 ["channel-bundle-id"] = (usebundle and endpoints[i] or nil)
             }):up()
         end
         stanza:up()
@@ -346,6 +349,8 @@ local function handle_colibri(event)
                 participant2sources[room.jid] = {}
             end
 
+            local bundlegroup = {} 
+
             for content in conf:childtags("content", xmlns_colibri) do
                 module:log("debug", "  content name %s", content.attr.name)
                 local channel = nil
@@ -366,11 +371,13 @@ local function handle_colibri(event)
                             :tag("payload-type", { id = "103", name = "ISAC", clockrate = "16000" }):up()
                             :tag("payload-type", { id = "104", name = "ISAC", clockrate = "32000" }):up()
 
-                            :tag("rtcp-mux"):up()
 
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
 
+                            if usebundle then
+                                initiate:tag("rtcp-mux"):up()
+                            end
                             for jid, sources in pairs(participant2sources[room.jid]) do
                                 if sources[content.attr.name] then
                                     for i, source in ipairs(sources[content.attr.name]) do
@@ -390,11 +397,12 @@ local function handle_colibri(event)
                             :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
                             --:tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
 
-                            :tag("rtcp-mux"):up()
-
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
                             :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
 
+                            if usebundle then
+                                initiate:tag("rtcp-mux"):up()
+                            end
                             for jid, sources in pairs(participant2sources[room.jid]) do
                                 if sources[content.attr.name] then
                                     for i, source in ipairs(sources[content.attr.name]) do
@@ -414,12 +422,26 @@ local function handle_colibri(event)
                 end
 
                 if channel then -- add transport
-                    for transport in channel:childtags("transport", xmlns_jingle_ice) do
-                        -- add a XEP-0343 sctpmap element
+                    local transports
+                    if channel.attr["channel-bundle-id"] then
+                        bundlegroup[#bundlegroup+1] = content.attr.name
+                        for bundle in conf:childtags("channel-bundle") do
+                            if bundle.attr.id == channel.attr["channel-bundle-id"] then
+                                transports = bundle:childtags("transport", xmlns_jingle_ice)
+                                break
+                            end
+                        end
+                    else
+                        transports = channel:childtags("transport", xmlns_jingle_ice)
+                    end
+                    -- FIXME: check that a transport was found?
+                    for transport in transports do
                         for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
                             fingerprint.attr.setup = "actpass"
                         end
+                        -- add a XEP-0343 sctpmap element
                         if content.attr.name == "data" then
+                            transport = st.clone(transport) -- need to clone before modifying
                             transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
                         end
                         initiate:add_child(transport)
@@ -437,6 +459,15 @@ local function handle_colibri(event)
                 end
                 initiate:up() -- content
             end
+            if #bundlegroup > 0 then
+                initiate:tag("group", { xmlns = xmlns_jingle_grouping, semantics = "BUNDLE" })
+                module:log("debug", "BUNDLE %d", #bundlegroup)
+                for i, name in ipairs(bundlegroup) do
+                    module:log("debug", "BUNDLE %s %s", tostring(i), name)
+                    initiate:tag("content", { name = name }):up()
+                end
+                initiate:up()
+            end
             initiate:up() -- jingle
             initiate:up()
 
@@ -444,6 +475,7 @@ local function handle_colibri(event)
             participant2sources[room.jid][occupant_jid] = {}
 
             room:route_to_occupant(occupant, initiate)
+            --module:log("debug", "send_jingle %s", tostring(initiate))
         end
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then

@@ -71,7 +71,7 @@ local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
 local xmlns_jingle_grouping = "urn:xmpp:jingle:apps:grouping:0";
 local xmlns_jingle_sctp = "urn:xmpp:jingle:transports:dtls-sctp:1";
-local xmlns_mmuc = "urn:xmpp:mmuc:0";
+--local xmlns_mmuc = "urn:xmpp:tmp:mmuc:0";
 
 -- advertise features
 module:add_feature(xmlns_colibri);
@@ -79,7 +79,7 @@ module:add_feature(xmlns_jingle);
 module:add_feature(xmlns_jingle_ice);
 module:add_feature(xmlns_jingle_rtp);
 module:add_feature(xmlns_jingle_dtls);
-module:add_feature(xmlns_mmuc);
+--module:add_feature(xmlns_mmuc);
 
 -- we need an array that associates a room with a conference ID
 local conference_array = {};
@@ -229,10 +229,10 @@ local function handle_leave(event)
                 module:log("debug", "source-remove")
                 local sid = roomjid2conference[room.jid] -- uses the id from the bridge
                 local sourceremove = st.iq({ from = room.jid, type = "set" })
-                    :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "source-remove", initiator = room.jid, sid = sid })
+                    :tag("jingle", { xmlns = xmlns_jingle, action = "source-remove", initiator = room.jid, sid = sid })
                 for name, sourcelist in pairs(sources) do
                     sourceremove:tag("content", { creator = "initiator", name = name, senders = "both" })
-                        :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = name })
+                        :tag("description", { xmlns = xmlns_jingle_rtp, media = name })
                         for i, source in ipairs(sourcelist) do
                             sourceremove:add_child(source)
                         end
@@ -267,7 +267,7 @@ local function handle_leave(event)
         if count == 1 then -- the room is empty
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local terminate = st.iq({ from = room.jid, type = "set" })
-                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-terminate", initiator = room.jid, sid = sid })
+                :tag("jingle", { xmlns = xmlns_jingle, action = "session-terminate", initiator = room.jid, sid = sid })
                   :tag("reason")
                     :tag("busy"):up()
                   :up()
@@ -339,7 +339,7 @@ local function handle_colibri(event)
         for channelnumber = 1, #occupants do
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local initiate = st.iq({ from = roomjid, type = "set" })
-                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = "session-initiate", initiator = roomjid, sid = sid })
+                :tag("jingle", { xmlns = xmlns_jingle, action = "session-initiate", initiator = roomjid, sid = sid })
 
             local occupant = occupants[channelnumber]
             local occupant_jid = occupant.jid
@@ -362,7 +362,7 @@ local function handle_colibri(event)
                     jid2channels[occupant_jid][content.attr.name] = channel.attr.id
 
                     if content.attr.name == "audio" then -- build audio descrіption
-                        initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "audio" })
+                        initiate:tag("description", { xmlns = xmlns_jingle_rtp, media = "audio" })
                             :tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
                                 :tag("parameter", { name = "minptime", value = "10" }):up()
                             :up()
@@ -387,7 +387,7 @@ local function handle_colibri(event)
                             end
                         initiate:up()
                     elseif content.attr.name == "video" then -- build video description
-                        initiate:tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = "video" })
+                        initiate:tag("description", { xmlns = xmlns_jingle_rtp, media = "video" })
                             :tag("payload-type", { id = "100", name = "VP8", clockrate = "90000" })
                                 :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
                                 :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack' }):up()
@@ -611,10 +611,10 @@ local function handle_jingle(event)
                 sendaction = "source-remove"
             end
             local sourceadd = st.iq({ from = roomjid, type = "set" })
-                :tag("jingle", { xmlns = "urn:xmpp:jingle:1", action = sendaction, initiator = roomjid, sid = sid })
+                :tag("jingle", { xmlns = xmlns_jingle, action = sendaction, initiator = roomjid, sid = sid })
             for name, sourcelist in pairs(sources) do
                 sourceadd:tag("content", { creator = "initiator", name = name, senders = "both" })
-                    :tag("description", { xmlns = "urn:xmpp:jingle:apps:rtp:1", media = name })
+                    :tag("description", { xmlns = xmlns_jingle_rtp, media = name })
                     for i, source in ipairs(sourcelist) do
                         sourceadd:add_child(source)
                     end

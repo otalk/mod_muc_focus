@@ -214,14 +214,6 @@ local function handle_leave(event)
         -- optimization: keep the conference a little longer
         -- to allow for fast rejoins
 
-        -- we might close those immediately by setting their expire to 0
-        local channels = jid2channels[jid] 
-        if channels then
-            jid2channels[jid] = nil
-        else
-            --module:log("debug", "handle_leave: no channels found")
-        end
-
         if participant2sources[room.jid] and participant2sources[room.jid][jid] then
             local sources = participant2sources[room.jid][jid]
             if sources then
@@ -264,6 +256,27 @@ local function handle_leave(event)
             end
         end
 
+        -- we close those channels by setting their expire to 0
+        local channels = jid2channels[jid] 
+        if channels then
+            local confid = roomjid2conference[room.jid]
+            local confupdate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
+            :tag("conference", { xmlns = xmlns_colibri, id = confid })
+            for name, id in pairs(channels) do
+                confupdate:tag("content", { name = name })
+                if name == "data" then
+                    confupdate:tag("sctpconnection", { id = id, expire = 0 })
+                else
+                    confupdate:tag("channel", { id = id, expire = 0 })
+                end
+            end
+            module:log("debug", "expire %s", tostring(confupdate))
+            module:send(confupdate);
+            jid2channels[jid] = nil
+        else
+            --module:log("debug", "handle_leave: no channels found")
+        end
+
         if count == 1 then -- the room is empty
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local terminate = st.iq({ from = room.jid, type = "set" })
@@ -285,6 +298,9 @@ local function handle_leave(event)
             for nick, occupant in room:each_occupant() do
                 pending[room.jid][#pending[room.jid]+1] = occupant.jid
                 endpoints[room.jid][#endpoints[room.jid]+1] = nick
+
+                -- FIXME: should also expire those
+                jid2channel[occupant.jid] = nil
             end
         end
         if count <= 1 then
@@ -296,6 +312,8 @@ local function handle_leave(event)
             pending[room.jid] = nil
             endpoints[room.jid] = nil
         end
+
+        --  send confupdate with expire=0 to bridge
         return true;
 end
 module:hook("muc-occupant-left", handle_leave, 2);
@@ -413,8 +431,9 @@ local function handle_colibri(event)
                         initiate:up()
                     end
                 elseif content.attr.name == "data" then
-                    -- data channels are handled differently -- currently
+                    -- data channels are handled slightly different
                     channel = iterators.to_array(content:childtags("sctpconnection", xmlns_colibri))[channelnumber]
+                    jid2channels[occupant_jid][content.attr.name] = channel.attr.id
                     initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
                     initiate:tag("description", { xmlns = "http://talky.io/ns/datachannel" })
                         -- no description yet. describe the channels?
@@ -604,7 +623,7 @@ local function handle_jingle(event)
             module:log("debug", "    content name %s", content.attr.name)
             confupdate:tag("content", { name = content.attr.name })
             if content.attr.name == "data" then
-                confupdate:tag("sctpconnection", { initiator = "true", endpoint = sender.nick })
+                confupdate:tag("sctpconnection", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
             else
                 confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
             end

@@ -265,9 +265,9 @@ local function handle_leave(event)
             for name, id in pairs(channels) do
                 confupdate:tag("content", { name = name })
                 if name == "data" then
-                    confupdate:tag("sctpconnection", { id = id, expire = 0 })
+                    confupdate:tag("sctpconnection", { id = id, expire = 0, endpoint = nick })
                 else
-                    confupdate:tag("channel", { id = id, expire = 0 })
+                    confupdate:tag("channel", { id = id, expire = 0, endpoint = nick })
                 end
             end
             module:log("debug", "expire %s", tostring(confupdate))
@@ -300,7 +300,7 @@ local function handle_leave(event)
                 endpoints[room.jid][#endpoints[room.jid]+1] = nick
 
                 -- FIXME: should also expire those
-                jid2channel[occupant.jid] = nil
+                jid2channels[occupant.jid] = nil
             end
         end
         if count <= 1 then

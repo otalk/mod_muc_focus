@@ -54,7 +54,7 @@ local focus_media_bridge = module:get_option_string("focus_media_bridge");
 -- FIXME: better to get the content types from room configuration or Jingle sessions?
 --local focus_content_types = module:get_option_array("focus_content_types");
 local focus_datachannels = true
-local usebundle = false -- breaks data channels in jvb-214
+local usebundle = true -- breaks data channels in jvb-214
 
 
 local iterators = require "util.iterators"

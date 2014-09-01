@@ -133,6 +133,22 @@ local function create_channels(stanza, endpoints)
     stanza:up():up()
 end
 
+local function expire_channels(roomjid, channels, endpoint)
+    -- FIXME: endpoint should not be required
+    local confid = roomjid2conference[roomjid]
+    local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
+        :tag("conference", { xmlns = xmlns_colibri, id = confid })
+    for name, id in pairs(channels) do
+        confupdate:tag("content", { name = name })
+        if name == "data" then
+            confupdate:tag("sctpconnection", { id = id, expire = 0, endpoint = endpoint })
+        else
+            confupdate:tag("channel", { id = id, expire = 0, endpoint = endpoint })
+        end
+    end
+    module:send(confupdate);
+end
+
 --
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
@@ -258,20 +274,9 @@ local function handle_leave(event)
 
         -- we close those channels by setting their expire to 0
         local channels = jid2channels[jid] 
+        local confid = roomjid2conference[room.jid]
         if channels then
-            local confid = roomjid2conference[room.jid]
-            local confupdate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
-            :tag("conference", { xmlns = xmlns_colibri, id = confid })
-            for name, id in pairs(channels) do
-                confupdate:tag("content", { name = name })
-                if name == "data" then
-                    confupdate:tag("sctpconnection", { id = id, expire = 0, endpoint = nick })
-                else
-                    confupdate:tag("channel", { id = id, expire = 0, endpoint = nick })
-                end
-            end
-            module:log("debug", "expire %s", tostring(confupdate))
-            module:send(confupdate);
+            expire_channels(room.jid, channels, nick)
             jid2channels[jid] = nil
         else
             --module:log("debug", "handle_leave: no channels found")
@@ -292,6 +297,10 @@ local function handle_leave(event)
                 end
             end
 
+            -- clean up the channel of that participant
+            local confupdate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
+                :tag("conference", { xmlns = xmlns_colibri, id = confid })
+
             -- set remaining participant as pending
             pending[room.jid] = {}
             endpoints[room.jid] = {}
@@ -299,9 +308,13 @@ local function handle_leave(event)
                 pending[room.jid][#pending[room.jid]+1] = occupant.jid
                 endpoints[room.jid][#endpoints[room.jid]+1] = nick
 
-                -- FIXME: should also expire those
-                jid2channels[occupant.jid] = nil
+                channels = jid2channels[occupant.jid]
+                if (channels) then
+                    expire_channels(room.jid, channels, nick)
+                    jid2channels[occupant.jid] = nil
+                end
             end
+
         end
         if count <= 1 then
             roomjid2conference[room.jid] = nil
@@ -313,7 +326,6 @@ local function handle_leave(event)
             endpoints[room.jid] = nil
         end
 
-        --  send confupdate with expire=0 to bridge
         return true;
 end
 module:hook("muc-occupant-left", handle_leave, 2);

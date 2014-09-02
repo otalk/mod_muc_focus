@@ -141,10 +141,11 @@ local function expire_channels(roomjid, channels, endpoint)
     for name, id in pairs(channels) do
         confupdate:tag("content", { name = name })
         if name == "data" then
-            confupdate:tag("sctpconnection", { id = id, expire = 0, endpoint = endpoint })
+            confupdate:tag("sctpconnection", { id = id, expire = 0, endpoint = endpoint }):up()
         else
-            confupdate:tag("channel", { id = id, expire = 0, endpoint = endpoint })
+            confupdate:tag("channel", { id = id, expire = 0, endpoint = endpoint }):up()
         end
+        confupdate:up()
     end
     module:send(confupdate);
 end

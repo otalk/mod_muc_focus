@@ -11,7 +11,8 @@ multimedia conference.
 Basically, when this module is enabled, a Multi-User Chat room 
 (XEP-0045) speaks Jingle (XEP-0166, XEP-0167, XEP-0176, etc.) to 
 XMPP clients and speaks COLIBRI (XEP-0340) to media bridges (e.g.
-media mixers and selective forwarding units).
+media mixers and selective forwarding units like the Jitsi
+Videobridge).
 
 In particular, when a participant joins the room and advertises 
 support for the urn:xmpp:multimedia-muc feature, the module:
@@ -54,7 +55,7 @@ local focus_media_bridge = module:get_option_string("focus_media_bridge");
 -- FIXME: better to get the content types from room configuration or Jingle sessions?
 --local focus_content_types = module:get_option_array("focus_content_types");
 local focus_datachannels = true
-local usebundle = true -- breaks data channels in jvb-214
+local usebundle = true
 
 
 local iterators = require "util.iterators"
@@ -537,6 +538,8 @@ local function handle_jingle(event)
         -- or look up the participant based on the real jid
         module:log("debug", "handle_jingle %s from %s", jingle.attr.action, stanza.attr.from)
         local roomjid = stanza.attr.to
+        -- FIXME: ignore jingle not addressed to this host
+        -- and stanzas not addressed to the rooms bare jid
         local room = jid2room[roomjid]
         local confid = roomjid2conference[roomjid]
         local action = jingle.attr.action

@@ -223,10 +223,10 @@ module:hook("muc-occupant-joined", handle_join, 2);
 
 local function handle_leave(event)
         -- why doesn't this pass the stanza?
-        local room, nick, stanza, jid = event.room, event.nick, event.stanza, event.jid
+        local room, nick = event.room, event.nick
         local count = iterators.count(room:each_occupant());
-		module:log("debug", "handle_leave %s %s %s %s, #occupants %d", 
-                   tostring(room), tostring(nick), tostring(stanza), tostring(jid), count);
+		module:log("debug", "handle_leave %s %s, #occupants %d", 
+                   tostring(room), tostring(nick), count);
         -- same here, remove conference when there are now
         -- less than two participants in the room
         -- optimization: keep the conference a little longer

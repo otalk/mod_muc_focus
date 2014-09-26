@@ -232,8 +232,8 @@ local function handle_leave(event)
         -- optimization: keep the conference a little longer
         -- to allow for fast rejoins
 
-        if participant2sources[room.jid] and participant2sources[room.jid][jid] then
-            local sources = participant2sources[room.jid][jid]
+        if participant2sources[room.jid] and participant2sources[room.jid][nick] then
+            local sources = participant2sources[room.jid][nick]
             if sources then
                 -- we need to send source-remove for these
                 module:log("debug", "source-remove")
@@ -250,12 +250,12 @@ local function handle_leave(event)
                     :up() -- content
                 end
 
-                participant2sources[room.jid][jid] = nil
+                participant2sources[room.jid][nick] = nil
 
                 for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                     if occupant_jid ~= jid then -- cant happen i think
                         module:log("debug", "send source-remove to %s", tostring(occupant_jid))
-                        local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                        local occupant = room:get_occupant_by_nick(occupant_jid)
                         room:route_to_occupant(occupant, sourceremove)
                     end
                 end
@@ -275,11 +275,11 @@ local function handle_leave(event)
         end
 
         -- we close those channels by setting their expire to 0
-        local channels = jid2channels[jid] 
+        local channels = jid2channels[nick] 
         local confid = roomjid2conference[room.jid]
         if channels then
             expire_channels(room.jid, channels, nick)
-            jid2channels[jid] = nil
+            jid2channels[nick] = nil
         else
             --module:log("debug", "handle_leave: no channels found")
         end
@@ -294,7 +294,7 @@ local function handle_leave(event)
                 :up()
             if participant2sources[room.jid] then
                 for occupant_jid in iterators.keys(participant2sources[room.jid]) do
-                    local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                    local occupant = room:get_occupant_by_nick(occupant_jid)
                     if occupant then room:route_to_occupant(occupant, terminate) end
                 end
             end
@@ -310,10 +310,10 @@ local function handle_leave(event)
                 pending[room.jid][#pending[room.jid]+1] = occupant.jid
                 endpoints[room.jid][#endpoints[room.jid]+1] = nick
 
-                channels = jid2channels[occupant.jid]
+                channels = jid2channels[nick]
                 if (channels) then
                     expire_channels(room.jid, channels, nick)
-                    jid2channels[occupant.jid] = nil
+                    jid2channels[nick] = nil
                 end
             end
 
@@ -374,7 +374,7 @@ local function handle_colibri(event)
                 :tag("jingle", { xmlns = xmlns_jingle, action = "session-initiate", initiator = roomjid, sid = sid })
 
             local occupant = occupants[channelnumber]
-            local occupant_jid = occupant.jid
+            local occupant_jid = occupant.nick
             jid2channels[occupant_jid] = {}
 
             if participant2sources[room.jid] == nil then
@@ -598,7 +598,7 @@ local function handle_jingle(event)
 
 
             -- FIXME handle updates and removals
-            participant2sources[room.jid][stanza.attr.from] = sources
+            participant2sources[room.jid][sender.nick] = sources
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local sendaction = "source-add"
             if action == "source-remove" then
@@ -619,9 +619,9 @@ local function handle_jingle(event)
 
             -- sent to everyone but the sender
             for occupant_jid in iterators.keys(participant2sources[room.jid]) do
-                if occupant_jid ~= stanza.attr.from then
+                if occupant_jid ~= sender.nick then
                     module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))
-                    local occupant = room:get_occupant_by_real_jid(occupant_jid)
+                    local occupant = room:get_occupant_by_nick(occupant_jid)
                     if (occupant) then -- FIXME: when does this happen
                         room:route_to_occupant(occupant, sourceadd)
                     else
@@ -631,7 +631,7 @@ local function handle_jingle(event)
             end
         end
 
-        local channels = jid2channels[stanza.attr.from]
+        local channels = jid2channels[sender.nick]
         local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
             :tag("conference", { xmlns = xmlns_colibri, id = confid })
 

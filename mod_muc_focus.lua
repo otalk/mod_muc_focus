@@ -156,7 +156,8 @@ end
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
 --
 local function handle_join(event)
-        local room, nick, stanza = event.room, event.nick, event.stanza
+        local room, nick, occupant = event.room, event.nick, event.occupant
+        local stanza = occupant:get_presence()
         local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
@@ -180,7 +181,7 @@ local function handle_join(event)
         -- FIXME: this doesn't allow us to clean up on leave
         if pending[room.jid] == nil then pending[room.jid] = {}; end
         if endpoints[room.jid] == nil then endpoints[room.jid] = {}; end
-        pending[room.jid][#pending[room.jid]+1] = stanza.attr.from
+        pending[room.jid][#pending[room.jid]+1] = nick
         endpoints[room.jid][#endpoints[room.jid]+1] = nick
         module:log("debug", "pending %d count %d", #pending[room.jid], count)
         if count == 1 then return true; end
@@ -357,9 +358,9 @@ local function handle_colibri(event)
 
         --local occupant_jid = callbacks[stanza.attr.id]
         local occupants = {}
-        for idx, occupant_jid in pairs(callbacks[stanza.attr.id]) do
+        for idx, nick in pairs(callbacks[stanza.attr.id]) do
             -- FIXME: actually we want to get a particular session of an occupant, not all of them
-            local occupant = room:get_occupant_by_real_jid(occupant_jid)
+            local occupant = room:get_occupant_by_nick(nick)
             module:log("debug", "occupant is %s", tostring(occupant))
             occupants[idx] = occupant
         end

@@ -689,7 +689,6 @@ local function handle_pubsub(event)
         if stanza.attr.from ~= focus_media_bridge then return; end
         local pubsub = stanza:get_child("pubsub", xmlns_pubsub)
         if pubsub == nil then return; end
-        module:log("debug", "handle_pubsub from %s", stanza.attr.from)
         local publish = pubsub:get_child("publish", xmlns_pubsub)
         if publish then
             for item in publish:childtags("item", xmlns_pubsub) do
@@ -698,20 +697,21 @@ local function handle_pubsub(event)
                     for stat in stats:childtags("stat", xmlns_colibri) do
                         statstable[stat.attr.name] = stat.attr.value
                     end
-                    module:log("debug", "stats: %s", serialization.serialize(statstable))
-                    -- FIXME push to influxdb
+                    --module:log("debug", "stats: %s", serialization.serialize(statstable))
+                    module:fire_event("colibri-stats", { stats = stats, bridge = focus_media_bridge })
                 end
             end
 	    origin.send(st.reply(stanza))
             return true
         end
-	local create = pubsub:get_child("create", xmlns_pubsub)
+        local create = pubsub:get_child("create", xmlns_pubsub)
         if create then
             module:log("debug", "node create")
             -- acknowledge node creation
 	    origin.send(st.reply(stanza))
             return true
         end
+	-- TODO: handle configure
         return false
 end
 module:hook("iq/host", handle_pubsub, 3);

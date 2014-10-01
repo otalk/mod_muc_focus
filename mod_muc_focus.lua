@@ -73,6 +73,7 @@ local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
 local xmlns_jingle_grouping = "urn:xmpp:jingle:apps:grouping:0";
 local xmlns_jingle_sctp = "urn:xmpp:jingle:transports:dtls-sctp:1";
 --local xmlns_mmuc = "urn:xmpp:tmp:mmuc:0";
+local xmlns_pubsub = "http://jabber.org/protocol/pubsub";
 
 -- advertise features
 module:add_feature(xmlns_colibri);
@@ -680,5 +681,39 @@ module:hook("iq/bare", handle_jingle, 2);
 --
 -- end Jingle functions
 --
+
+-- pubsub stats
+local function handle_pubsub(event)
+        -- process incoming pubsub stanzas from the bridge
+        local origin, stanza = event.origin, event.stanza;
+        if stanza.attr.from ~= focus_media_bridge then return; end
+        local pubsub = stanza:get_child("pubsub", xmlns_pubsub)
+        if pubsub == nil then return; end
+        module:log("debug", "handle_pubsub from %s", stanza.attr.from)
+        local publish = pubsub:get_child("publish", xmlns_pubsub)
+        if publish then
+            for item in publish:childtags("item", xmlns_pubsub) do
+                for stats in item:childtags("stats", xmlns_colibri) do
+                    local statstable = {}
+                    for stat in stats:childtags("stat", xmlns_colibri) do
+                        statstable[stat.attr.name] = stat.attr.value
+                    end
+                    module:log("debug", "stats: %s", serialization.serialize(statstable))
+                    -- FIXME push to influxdb
+                end
+            end
+	    origin.send(st.reply(stanza))
+            return true
+        end
+	local create = pubsub:get_child("create", xmlns_pubsub)
+        if create then
+            module:log("debug", "node create")
+            -- acknowledge node creation
+	    origin.send(st.reply(stanza))
+            return true
+        end
+        return false
+end
+module:hook("iq/host", handle_pubsub, 3);
 
 log("info", "mod_muc_focus loaded");

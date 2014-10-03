@@ -681,6 +681,7 @@ local function handle_jingle(event)
         module:log("debug", "confupdate is %s", tostring(confupdate))
         module:send(confupdate);
 
+        session.send(st.reply(stanza))
         return true;
 end
 module:hook("iq/bare", handle_jingle, 2);

@@ -175,7 +175,7 @@ local function handle_join(event)
             module:log("debug", "caps ver %s", caps.attr.ver)
             -- currently jts2118m3Eaq5FILAt7qGmRc+8M= is firefox without colibri/multistream support
             if caps.attr.ver == "jts2118m3Eaq5FILAt7qGmRc+8M=" then
-                return true
+                return 
             end
         end
 
@@ -185,7 +185,7 @@ local function handle_join(event)
         pending[room.jid][#pending[room.jid]+1] = nick
         endpoints[room.jid][#endpoints[room.jid]+1] = nick
         module:log("debug", "pending %d count %d", #pending[room.jid], count)
-        if count == 1 then return true; end
+        if count == 1 then return; end
 
         jid2room[room.jid] = room
 
@@ -217,7 +217,7 @@ local function handle_join(event)
         pending[room.jid] = nil
         endpoints[room.jid] = nil
         module:log("debug", "send_colibri %s", tostring(confcreate))
-        return true
+        return 
 end
 module:hook("muc-occupant-joined", handle_join, 2);
 -- possibly we need to hook muc-occupant-session-new instead 
@@ -330,7 +330,7 @@ local function handle_leave(event)
             endpoints[room.jid] = nil
         end
 
-        return true;
+        return 
 end
 module:hook("muc-occupant-left", handle_leave, 2);
 

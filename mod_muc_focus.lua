@@ -572,6 +572,10 @@ local function handle_jingle(event)
                     sourcelist[#sourcelist+1] = source
                     module:log("debug", "source %s content %s", source.attr.ssrc, content.attr.name)
                 end
+                for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
+                    -- TODO
+                    --sourcelist[#sourcelist+1] = group 
+                end
                 sources[content.attr.name] = sourcelist 
             end
         end
@@ -653,6 +657,9 @@ local function handle_jingle(event)
                     confupdate:add_child(payload)
                 end
                 hasrtcpmux = description:get_child("rtcp-mux")
+                for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
+                    confupdate:add_child(group)
+                end
             end
             for transport in content:childtags("transport", xmlns_jingle_ice) do
                 module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)

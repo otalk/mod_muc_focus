@@ -682,7 +682,9 @@ module:hook("iq/bare", handle_jingle, 2);
 -- end Jingle functions
 --
 
--- pubsub stats
+-- pubsub stats collector -- see
+-- https://github.com/jitsi/jitsi-videobridge/blob/master/doc/using_statistics.md
+-- for more information
 local function handle_pubsub(event)
         -- process incoming pubsub stanzas from the bridge
         local origin, stanza = event.origin, event.stanza;
@@ -701,17 +703,17 @@ local function handle_pubsub(event)
                     module:fire_event("colibri-stats", { stats = stats, bridge = focus_media_bridge })
                 end
             end
-	    origin.send(st.reply(stanza))
+            origin.send(st.reply(stanza))
             return true
         end
         local create = pubsub:get_child("create", xmlns_pubsub)
         if create then
             module:log("debug", "node create")
             -- acknowledge node creation
-	    origin.send(st.reply(stanza))
+            origin.send(st.reply(stanza))
             return true
         end
-	-- TODO: handle configure
+        -- TODO: handle configure
         return false
 end
 module:hook("iq/host", handle_pubsub, 3);

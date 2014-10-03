@@ -720,6 +720,13 @@ local function handle_pubsub(event)
             origin.send(st.reply(stanza))
             return true
         end
+        local configure = pubsub:get_child("configure", xmlns_pubsub)
+        if configure then
+            module:log("debug", "node configure")
+            -- acknowledge node creation
+            origin.send(st.reply(stanza))
+            return true
+        end
         -- TODO: handle configure
         return false
 end

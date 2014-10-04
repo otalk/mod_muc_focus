@@ -701,6 +701,7 @@ local function handle_pubsub(event)
         if pubsub == nil then return; end
         local publish = pubsub:get_child("publish", xmlns_pubsub)
         if publish then
+            -- eventually this information will be used for load balancing
             for item in publish:childtags("item", xmlns_pubsub) do
                 for stats in item:childtags("stats", xmlns_colibri) do
                     local statstable = {}
@@ -708,28 +709,24 @@ local function handle_pubsub(event)
                         statstable[stat.attr.name] = stat.attr.value
                     end
                     --module:log("debug", "stats: %s", serialization.serialize(statstable))
-                    module:fire_event("colibri-stats", { stats = stats, bridge = focus_media_bridge })
+                    module:fire_event("colibri-stats", { stats = stats, bridge = stanza.attr.from })
                 end
             end
             origin.send(st.reply(stanza))
             return true
         end
-        local create = pubsub:get_child("create", xmlns_pubsub)
-        if create then
-            module:log("debug", "node create")
+        if pubsub:get_child("create", xmlns_pubsub) then
+            module:log("debug", "node created")
             -- acknowledge node creation
             origin.send(st.reply(stanza))
             return true
         end
-        local configure = pubsub:get_child("configure", xmlns_pubsub)
-        if configure then
-            module:log("debug", "node configure")
-            -- acknowledge node creation
+        if pubsub:get_child("configure", xmlns_pubsub) then
+            module:log("debug", "node configured")
+            -- acknowledge node configuration
             origin.send(st.reply(stanza))
             return true
         end
-        -- TODO: handle configure
-        return false
 end
 module:hook("iq/host", handle_pubsub, 3);
 

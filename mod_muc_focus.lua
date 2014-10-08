@@ -309,7 +309,7 @@ local function handle_leave(event)
             pending[room.jid] = {}
             endpoints[room.jid] = {}
             for nick, occupant in room:each_occupant() do
-                pending[room.jid][#pending[room.jid]+1] = occupant.jid
+                pending[room.jid][#pending[room.jid]+1] = nick
                 endpoints[room.jid][#endpoints[room.jid]+1] = nick
 
                 channels = jid2channels[nick]

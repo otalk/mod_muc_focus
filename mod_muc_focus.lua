@@ -291,7 +291,7 @@ local function handle_leave(event)
             local terminate = st.iq({ from = room.jid, type = "set" })
                 :tag("jingle", { xmlns = xmlns_jingle, action = "session-terminate", initiator = room.jid, sid = sid })
                   :tag("reason")
-                    :tag("busy"):up()
+                    :tag("success"):up()
                   :up()
                 :up()
             if participant2sources[room.jid] then

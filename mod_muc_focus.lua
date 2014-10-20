@@ -340,6 +340,11 @@ module:hook("muc-occupant-left", handle_leave, 2);
 local function handle_colibri(event)
         local stanza = event.stanza
 
+        if stanza.attr.type == "error" then
+            module:log("debug", "handle_colibri error %s", tostring(stanza))
+            return true
+        end
+
         local conf = stanza:get_child("conference", xmlns_colibri)
         if conf == nil then return; end
 

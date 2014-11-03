@@ -255,11 +255,13 @@ local function handle_leave(event)
 
                 participant2sources[room.jid][nick] = nil
 
-                for occupant_jid in iterators.keys(participant2sources[room.jid]) do
-                    if occupant_jid ~= jid then -- cant happen i think
-                        module:log("debug", "send source-remove to %s", tostring(occupant_jid))
-                        local occupant = room:get_occupant_by_nick(occupant_jid)
-                        room:route_to_occupant(occupant, sourceremove)
+                if count > 1 then -- will terminate session otherwise
+                    for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+                        if occupant_jid ~= jid then -- cant happen i think
+                            module:log("debug", "send source-remove to %s", tostring(occupant_jid))
+                            local occupant = room:get_occupant_by_nick(occupant_jid)
+                            room:route_to_occupant(occupant, sourceremove)
+                        end
                     end
                 end
             end

@@ -44,6 +44,7 @@ MUC domain...
 
 -- invoke various utilities
 local st = require "util.stanza";
+local jid  = require "util.jid";
 local config = require "core.configmanager";
 local setmetatable = setmetatable;
 --local host = module.get_host();
@@ -538,6 +539,13 @@ local function handle_jingle(event)
         local session, stanza = event.origin, event.stanza;
         local jingle = stanza:get_child("jingle", xmlns_jingle)
         if jingle == nil then return; end
+
+        -- only handle things addressed to the room, not participants
+        local node, host, resource = jid.split(stanza.attr.to)
+        if resource ~= nil then return; end
+
+        if host ~= module:get_host() then return; end -- TODO is that necessary?
+
         --module:log("debug", "handle_jingle %s %s", tostring(session), tostring(stanza))
         --module:log("info", ("sending a Jingle invitation to the following participant: " .. origin.from));
 

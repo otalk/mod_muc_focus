@@ -73,7 +73,7 @@ local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
 local xmlns_jingle_grouping = "urn:xmpp:jingle:apps:grouping:0";
 local xmlns_jingle_sctp = "urn:xmpp:jingle:transports:dtls-sctp:1";
---local xmlns_mmuc = "urn:xmpp:tmp:mmuc:0";
+local xmlns_mmuc = "http://andyet.com/xmlns/mmuc"; -- multimedia muc
 local xmlns_pubsub = "http://jabber.org/protocol/pubsub";
 
 -- advertise features
@@ -607,7 +607,7 @@ local function handle_jingle(event)
             -- or the new plan to tell the MSID
             local pr = sender:get_presence()
             for msid, foo in pairs(msids) do
-                pr:tag("mediastream", { xmlns = "http://andyet.net/xmlns/mmuc", msid = msid }):up()
+                pr:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid }):up()
             end
             --pr:tag("media", {xmlns = "http://.../ns/mjs"})
             --for name, source in pairs(sources) do
@@ -704,6 +704,12 @@ module:hook("iq/bare", handle_jingle, 2);
 --
 -- end Jingle functions
 --
+
+-- hook disco#info
+module:hook("muc-disco#info", function(event)
+    event.reply:tag("feature", {var = xmlns_mmuc}):up();
+end);
+
 
 -- pubsub stats collector -- see
 -- https://github.com/jitsi/jitsi-videobridge/blob/master/doc/using_statistics.md

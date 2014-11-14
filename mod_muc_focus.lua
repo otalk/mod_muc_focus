@@ -157,11 +157,11 @@ local function expire_channels(roomjid, channels, endpoint)
     module:send(confupdate);
 end
 
---
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
---
-local function handle_join(event)
+-- possibly we need to hook muc-occupant-session-new instead 
+-- for cases where a participant joins with twice
+module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
         local count = iterators.count(room:each_occupant());
@@ -210,7 +210,7 @@ local function handle_join(event)
             -- FIXME push to a queue that is sent once we get the callback 
             -- for the create request
             module:log("debug", "FIXME new participant while conference creation is pending")
-            return true;
+            return
         else -- update existing conference
             module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
             confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
@@ -222,19 +222,14 @@ local function handle_join(event)
         -- just with different participants
 
         create_channels(confcreate, endpoints[room.jid])
-        module:send(confcreate);
         callbacks[confcreate.attr.id] = pending[room.jid]
         pending[room.jid] = nil
         endpoints[room.jid] = nil
         module:log("debug", "send_colibri %s", tostring(confcreate))
-        return 
-end
-module:hook("muc-occupant-joined", handle_join, 2);
--- possibly we need to hook muc-occupant-session-new instead 
--- for cases where a participant joins with twice
+        module:send(confcreate);
+end, 2)
 
-local function handle_leave(event)
-        -- why doesn't this pass the stanza?
+module:hook("muc-occupant-left", function (event) 
         local room, nick = event.room, event.nick
         local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_leave %s %s, #occupants %d", 
@@ -346,13 +341,11 @@ local function handle_leave(event)
         end
 
         return 
-end
-module:hook("muc-occupant-left", handle_leave, 2);
+end, 2);
 
 --
 -- things we do when a room receives a COLIBRI stanza from the bridge 
---
-local function handle_colibri(event)
+module:hook("iq/bare", function (event)
         local stanza = event.stanza
 
         if stanza.attr.type == "error" then
@@ -547,11 +540,10 @@ local function handle_colibri(event)
 
         -- if receive conference with known ID but unknown channel ID...
         return true
-end
-module:hook("iq/bare", handle_colibri, 2);
+end, 2);
 
-local function handle_jingle(event)
-        -- process incoming Jingle stanzas from clients
+-- process incoming Jingle stanzas from clients
+module:hook("iq/bare", function (event) 
         local session, stanza = event.origin, event.stanza;
         local jingle = stanza:get_child("jingle", xmlns_jingle)
         if jingle == nil then return; end
@@ -713,8 +705,7 @@ local function handle_jingle(event)
 
         session.send(st.reply(stanza))
         return true;
-end
-module:hook("iq/bare", handle_jingle, 2);
+end, 2);
 
 --
 -- end Jingle functions

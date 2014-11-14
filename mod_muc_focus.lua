@@ -113,6 +113,8 @@ local callbacks = {}
 
 
 -- channel functions: create, update, expire 
+
+-- create channels for multiple endpoints
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
     for i = 1,#endpoints do
@@ -141,6 +143,7 @@ local function create_channels(stanza, endpoints)
     stanza:up():up()
 end
 
+-- updates channels for a single endpoint
 local function update_channels(stanza, contents, channels, endpoint)
     for content in contents do
         module:log("debug", "    content name %s", content.attr.name)
@@ -181,7 +184,7 @@ local function update_channels(stanza, contents, channels, endpoint)
     end
 end
 
-
+-- expires channels for a single endpoint
 local function expire_channels(roomjid, channels, endpoint)
     -- FIXME: endpoint should not be required
     local confid = roomjid2conference[roomjid]

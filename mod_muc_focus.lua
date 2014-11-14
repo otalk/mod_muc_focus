@@ -105,6 +105,9 @@ local pending = {}
 -- endpoints associated with that
 local endpoints = {}
 
+-- bridge associated with a room
+local roomjid2bridge = {}
+
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
 
@@ -139,7 +142,8 @@ end
 local function expire_channels(roomjid, channels, endpoint)
     -- FIXME: endpoint should not be required
     local confid = roomjid2conference[roomjid]
-    local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
+    local bridge = roomjid2bridge[roomjid] 
+    local confupdate = st.iq({ from = roomjid, to = bridge, type = "set" })
         :tag("conference", { xmlns = xmlns_colibri, id = confid })
     for name, id in pairs(channels) do
         confupdate:tag("content", { name = name })
@@ -164,10 +168,15 @@ local function handle_join(event)
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
 
+        local bridge = roomjid2bridge[room.jid]
+        if not bridge then -- pick a bridge 
+            roomjid2bridge[room.jid] = focus_media_bridge
+            bridge = roomjid2bridge[room.jid]
+        end
         -- if there are now two occupants, create a conference
         -- look at room._occupants size?
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
-        module:log("debug", "room jid %s bridge %s", room.jid, focus_media_bridge)
+        module:log("debug", "room jid %s bridge %s", room.jid, bridge)
 
         -- check client caps
         -- currently hardcoded
@@ -190,7 +199,7 @@ local function handle_join(event)
 
         jid2room[room.jid] = room
 
-        local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
+        local confcreate = st.iq({ from = room.jid, to = bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
         if roomjid2conference[room.jid] == nil then -- create a conference
             module:log("debug", "creating conference for %s", room.jid)
@@ -234,6 +243,8 @@ local function handle_leave(event)
         -- less than two participants in the room
         -- optimization: keep the conference a little longer
         -- to allow for fast rejoins
+
+        local bridge = roomjid2bridge[room.jid]
 
         if participant2sources[room.jid] and participant2sources[room.jid][nick] then
             local sources = participant2sources[room.jid][nick]
@@ -305,7 +316,7 @@ local function handle_leave(event)
             end
 
             -- clean up the channel of that participant
-            local confupdate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
+            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
                 :tag("conference", { xmlns = xmlns_colibri, id = confid })
 
             -- set remaining participant as pending
@@ -331,6 +342,7 @@ local function handle_leave(event)
         if count == 0 then
             pending[room.jid] = nil
             endpoints[room.jid] = nil
+            roomjid2bridge[room.jid] = nil
         end
 
         return 
@@ -364,6 +376,8 @@ local function handle_colibri(event)
 
         roomjid2conference[roomjid] = confid
         local room = jid2room[roomjid]
+
+        -- FIXME: assert stanza.from == roomjid2bridge[room.jid]
 
         --local occupant_jid = callbacks[stanza.attr.id]
         local occupants = {}
@@ -561,6 +575,7 @@ local function handle_jingle(event)
         local confid = roomjid2conference[roomjid]
         local action = jingle.attr.action
         local sender = room:get_occupant_by_real_jid(stanza.attr.from)
+        local bridge = roomjid2bridge[room.jid]
 
         -- iterate again to look at the SSMA source elements
         -- FIXME: only for session-accept and source-add / source-remove?
@@ -653,7 +668,7 @@ local function handle_jingle(event)
         end
 
         local channels = jid2channels[sender.nick]
-        local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
+        local confupdate = st.iq({ from = roomjid, to = bridge, type = "set" })
             :tag("conference", { xmlns = xmlns_colibri, id = confid })
 
         for content in jingle:childtags("content", xmlns_jingle) do
@@ -717,6 +732,8 @@ end);
 local function handle_pubsub(event)
         -- process incoming pubsub stanzas from the bridge
         local origin, stanza = event.origin, event.stanza;
+
+        -- FXIME: need to handle multiple bridges here
         if stanza.attr.from ~= focus_media_bridge then return; end
         local pubsub = stanza:get_child("pubsub", xmlns_pubsub)
         if pubsub == nil then return; end

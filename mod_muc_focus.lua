@@ -185,22 +185,17 @@ local function update_channels(stanza, contents, channels, endpoint)
 end
 
 -- expires channels for a single endpoint
-local function expire_channels(roomjid, channels, endpoint)
+local function expire_channels(stanza, channels, endpoint)
     -- FIXME: endpoint should not be required
-    local confid = roomjid2conference[roomjid]
-    local bridge = roomjid2bridge[roomjid] 
-    local confupdate = st.iq({ from = roomjid, to = bridge, type = "set" })
-        :tag("conference", { xmlns = xmlns_colibri, id = confid })
     for name, id in pairs(channels) do
-        confupdate:tag("content", { name = name })
+        stanza:tag("content", { name = name })
         if name == "data" then
-            confupdate:tag("sctpconnection", { id = id, expire = 0, endpoint = endpoint }):up()
+            stanza:tag("sctpconnection", { id = id, expire = 0, endpoint = endpoint }):up()
         else
-            confupdate:tag("channel", { id = id, expire = 0, endpoint = endpoint }):up()
+            stanza:tag("channel", { id = id, expire = 0, endpoint = endpoint }):up()
         end
-        confupdate:up()
+        stanza:up()
     end
-    module:send(confupdate);
 end
 
 -- when someone joins the room, we request a channel for them on the bridge
@@ -335,8 +330,11 @@ module:hook("muc-occupant-left", function (event)
         local channels = jid2channels[nick] 
         local confid = roomjid2conference[room.jid]
         if channels then
-            expire_channels(room.jid, channels, nick)
+            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                :tag("conference", { xmlns = xmlns_colibri, id = confid })
+            expire_channels(confupdate, channels, nick)
             jid2channels[nick] = nil
+            module:send(confupdate);
         else
             --module:log("debug", "handle_leave: no channels found")
         end
@@ -369,8 +367,11 @@ module:hook("muc-occupant-left", function (event)
 
                 channels = jid2channels[nick]
                 if (channels) then
-                    expire_channels(room.jid, channels, nick)
+                    local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                        :tag("conference", { xmlns = xmlns_colibri, id = confid })
+                    expire_channels(confupdate, channels, nick)
                     jid2channels[nick] = nil
+                    module:send(confupdate);
                 end
             end
 

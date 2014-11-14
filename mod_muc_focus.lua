@@ -337,7 +337,42 @@ local function handle_leave(event)
 end
 module:hook("muc-occupant-left", handle_leave, 2);
 
---
+-- the static parts of the audio description we send
+local function add_audio_description(stanza)
+    stanza:tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
+            :tag("parameter", { name = "minptime", value = "10" }):up()
+        :up()
+        :tag("payload-type", { id = "0", name = "PCMU", clockrate = "8000" }):up()
+        :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
+        :tag("payload-type", { id = "103", name = "ISAC", clockrate = "16000" }):up()
+        :tag("payload-type", { id = "104", name = "ISAC", clockrate = "32000" }):up()
+
+        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
+        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
+    if usebundle then
+        stanza:tag("rtcp-mux"):up()
+    end
+end
+
+-- the static parts of the audio description we send
+local function add_video_description(stanza)
+    stanza:tag("payload-type", { id = "100", name = "VP8", clockrate = "90000" })
+            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
+            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack' }):up()
+            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
+            :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'goog-remb' }):up()
+        :up()
+        :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
+        --:tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
+
+        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
+        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
+
+    if usebundle then
+        stanza:tag("rtcp-mux"):up()
+    end
+end
+
 -- things we do when a room receives a COLIBRI stanza from the bridge 
 --
 local function handle_colibri(event)
@@ -376,8 +411,6 @@ local function handle_colibri(event)
         callbacks[stanza.attr.id] = nil
 
 
-        -- FIXME: get_room_from_jid from the muc module? how do we know our muc module?
-
         for channelnumber = 1, #occupants do
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local initiate = st.iq({ from = roomjid, type = "set" })
@@ -396,72 +429,33 @@ local function handle_colibri(event)
             for content in conf:childtags("content", xmlns_colibri) do
                 module:log("debug", "  content name %s", content.attr.name)
                 local channel = nil
+                initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
                 if content.attr.name == "audio" or content.attr.name == "video" then
                     channel = iterators.to_array(content:childtags("channel", xmlns_colibri))[channelnumber]
-
-                    initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
-                    module:log("debug", "    channel id %s", channel.attr.id)
                     jid2channels[occupant_jid][content.attr.name] = channel.attr.id
 
-                    if content.attr.name == "audio" then -- build audio descrіption
-                        initiate:tag("description", { xmlns = xmlns_jingle_rtp, media = "audio" })
-                            :tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
-                                :tag("parameter", { name = "minptime", value = "10" }):up()
-                            :up()
-                            :tag("payload-type", { id = "0", name = "PCMU", clockrate = "8000" }):up()
-                            :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()
-                            :tag("payload-type", { id = "103", name = "ISAC", clockrate = "16000" }):up()
-                            :tag("payload-type", { id = "104", name = "ISAC", clockrate = "32000" }):up()
-
-
-                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "1", uri = "urn:ietf:params:rtp-hdrext:ssrc-audio-level" }):up()
-                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
-
-                            if usebundle then
-                                initiate:tag("rtcp-mux"):up()
-                            end
-                            for jid, sources in pairs(participant2sources[room.jid]) do
-                                if sources[content.attr.name] then
-                                    for i, source in ipairs(sources[content.attr.name]) do
-                                        initiate:add_child(source)
-                                    end
-                                end
-                            end
-                        initiate:up()
-                    elseif content.attr.name == "video" then -- build video description
-                        initiate:tag("description", { xmlns = xmlns_jingle_rtp, media = "video" })
-                            :tag("payload-type", { id = "100", name = "VP8", clockrate = "90000" })
-                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
-                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack' }):up()
-                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
-                                :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'goog-remb' }):up()
-                            :up()
-                            :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
-                            --:tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
-
-                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
-                            :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
-
-                            if usebundle then
-                                initiate:tag("rtcp-mux"):up()
-                            end
-                            for jid, sources in pairs(participant2sources[room.jid]) do
-                                if sources[content.attr.name] then
-                                    for i, source in ipairs(sources[content.attr.name]) do
-                                        initiate:add_child(source)
-                                    end
-                                end
-                            end
-                        initiate:up()
+                    initiate:tag("description", { xmlns = xmlns_jingle_rtp, media = content.attr.name })
+                    if content.attr.name == "audio" then
+                        add_audio_description(initiate)
+                    elseif content.attr.name == "video" then
+                        add_video_description(initiate)
                     end
+                    -- copy ssrcs
+                    for jid, sources in pairs(participant2sources[room.jid]) do
+                        if sources[content.attr.name] then
+                            for i, source in ipairs(sources[content.attr.name]) do
+                                initiate:add_child(source)
+                            end
+                        end
+                    end
+                    initiate:up()
                 elseif content.attr.name == "data" then
                     -- data channels are handled slightly different
                     channel = iterators.to_array(content:childtags("sctpconnection", xmlns_colibri))[channelnumber]
                     jid2channels[occupant_jid][content.attr.name] = channel.attr.id
-                    initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
                     initiate:tag("description", { xmlns = "http://talky.io/ns/datachannel" })
                         -- no description yet. describe the channels?
-                        :up()
+                    :up()
                 end
 
                 if channel then -- add transport
@@ -488,16 +482,6 @@ local function handle_colibri(event)
                             transport:tag("sctpmap", { xmlns = xmlns_jingle_sctp, number = channel.attr.port, protocol = "webrtc-datachannel", streams = 1024 }):up()
                         end
                         initiate:add_child(transport)
-
-                        -- actually we just need to copy the transports
-                        -- but this is so much fun
-                        module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
-                        for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                            module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
-                        end
-                        for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
-                            module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
-                        end
                     end
                 end
                 initiate:up() -- content

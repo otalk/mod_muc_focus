@@ -198,6 +198,11 @@ local function expire_channels(stanza, channels, endpoint)
     end
 end
 
+-- picking a bridge, simplistic version
+local function pick_bridge(roomjid)
+    return focus_media_bridge
+end
+
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
 -- possibly we need to hook muc-occupant-session-new instead 
@@ -211,9 +216,10 @@ module:hook("muc-occupant-joined", function (event)
 
         local bridge = roomjid2bridge[room.jid]
         if not bridge then -- pick a bridge 
-            roomjid2bridge[room.jid] = focus_media_bridge
-            bridge = roomjid2bridge[room.jid]
+            roomjid2bridge[room.jid] = pick_bridge(room.jid)
+            bridge = roomjid2bridge[room.jid] 
         end
+
         -- if there are now two occupants, create a conference
         -- look at room._occupants size?
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
@@ -411,13 +417,18 @@ module:hook("iq/bare", function (event)
         module:log("debug", "conf id %s", confid)
 
         local roomjid = stanza.attr.to
+
+        -- assert the sender is the bridge associated with this room
+        if stanza.attr.from ~= roomjid2bridge[roomjid] then
+            module:log("debug", "handle_colibri fake sender %s expected %s", stanza.attr.from, roomjid2bridge[roomjid])
+            return
+        end
+
         if callbacks[stanza.attr.id] == nil then return true; end
         module:log("debug", "handle_colibri %s", tostring(event.stanza))
 
         roomjid2conference[roomjid] = confid
         local room = jid2room[roomjid]
-
-        -- FIXME: assert stanza.from == roomjid2bridge[room.jid]
 
         --local occupant_jid = callbacks[stanza.attr.id]
         local occupants = {}

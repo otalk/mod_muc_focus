@@ -73,7 +73,7 @@ local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
 local xmlns_jingle_grouping = "urn:xmpp:jingle:apps:grouping:0";
 local xmlns_jingle_sctp = "urn:xmpp:jingle:transports:dtls-sctp:1";
-local xmlns_mmuc = "http://andyet.com/xmlns/mmuc"; -- multimedia muc
+local xmlns_mmuc = "http://andyet.net/xmlns/mmuc"; -- multimedia muc
 local xmlns_pubsub = "http://jabber.org/protocol/pubsub";
 
 -- advertise features

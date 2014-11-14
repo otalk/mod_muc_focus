@@ -111,6 +111,8 @@ local roomjid2bridge = {}
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
 
+
+-- channel functions: create, update, expire 
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
     for i = 1,#endpoints do
@@ -138,6 +140,47 @@ local function create_channels(stanza, endpoints)
     end
     stanza:up():up()
 end
+
+local function update_channels(stanza, contents, channels, endpoint)
+    for content in contents do
+        module:log("debug", "    content name %s", content.attr.name)
+        stanza:tag("content", { name = content.attr.name })
+        if content.attr.name == "data" then
+            stanza:tag("sctpconnection", { initiator = "true", id = channels[content.attr.name], endpoint = endpoint })
+        else
+            stanza:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = endpoint })
+        end
+        local hasrtcpmux = nil
+        for description in content:childtags("description", xmlns_jingle_rtp) do
+            module:log("debug", "      description media %s", description.attr.media)
+            for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
+                module:log("debug", "        payload name %s", payload.attr.name)
+                stanza:add_child(payload)
+            end
+            hasrtcpmux = description:get_child("rtcp-mux")
+            for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
+                stanza:add_child(group)
+            end
+        end
+        for transport in content:childtags("transport", xmlns_jingle_ice) do
+            module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
+            for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+              module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
+            end
+            for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
+              module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+            end
+            -- colibri puts rtcp-mux inside transport (which is probably the right thing to do)
+            if hasrtcpmux then
+                transport:tag("rtcp-mux"):up()
+            end
+            stanza:add_child(transport)
+        end
+        stanza:up() -- channel
+        stanza:up() -- content
+    end
+end
+
 
 local function expire_channels(roomjid, channels, endpoint)
     -- FIXME: endpoint should not be required
@@ -659,54 +702,18 @@ module:hook("iq/bare", function (event)
             end
         end
 
+        -- update the channels
         local channels = jid2channels[sender.nick]
         local confupdate = st.iq({ from = roomjid, to = bridge, type = "set" })
             :tag("conference", { xmlns = xmlns_colibri, id = confid })
+        update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
 
-        for content in jingle:childtags("content", xmlns_jingle) do
-            module:log("debug", "    content name %s", content.attr.name)
-            confupdate:tag("content", { name = content.attr.name })
-            if content.attr.name == "data" then
-                confupdate:tag("sctpconnection", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
-            else
-                confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
-            end
-            local hasrtcpmux = nil
-            for description in content:childtags("description", xmlns_jingle_rtp) do
-                module:log("debug", "      description media %s", description.attr.media)
-                for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
-                    module:log("debug", "        payload name %s", payload.attr.name)
-                    confupdate:add_child(payload)
-                end
-                hasrtcpmux = description:get_child("rtcp-mux")
-                for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
-                    confupdate:add_child(group)
-                end
-            end
-            for transport in content:childtags("transport", xmlns_jingle_ice) do
-                module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
-                for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                  module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
-                end
-                for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
-                  module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
-                end
-                -- colibri puts rtcp-mux inside transport (which is probably the right thing to do)
-                if hasrtcpmux then
-                    transport:tag("rtcp-mux"):up()
-                end
-                confupdate:add_child(transport)
-            end
-            confupdate:up() -- channel
-            confupdate:up() -- content
-        end
         module:log("debug", "confupdate is %s", tostring(confupdate))
         module:send(confupdate);
 
         session.send(st.reply(stanza))
         return true;
 end, 2);
-
 --
 -- end Jingle functions
 --

@@ -105,9 +105,16 @@ local pending = {}
 -- endpoints associated with that
 local endpoints = {}
 
+-- bridge associated with a room
+local roomjid2bridge = {}
+
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
 
+
+-- channel functions: create, update, expire 
+
+-- create channels for multiple endpoints
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
     for i = 1,#endpoints do
@@ -136,38 +143,87 @@ local function create_channels(stanza, endpoints)
     stanza:up():up()
 end
 
-local function expire_channels(roomjid, channels, endpoint)
-    -- FIXME: endpoint should not be required
-    local confid = roomjid2conference[roomjid]
-    local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
-        :tag("conference", { xmlns = xmlns_colibri, id = confid })
-    for name, id in pairs(channels) do
-        confupdate:tag("content", { name = name })
-        if name == "data" then
-            confupdate:tag("sctpconnection", { id = id, expire = 0, endpoint = endpoint }):up()
+-- updates channels for a single endpoint
+local function update_channels(stanza, contents, channels, endpoint)
+    for content in contents do
+        module:log("debug", "    content name %s", content.attr.name)
+        stanza:tag("content", { name = content.attr.name })
+        if content.attr.name == "data" then
+            stanza:tag("sctpconnection", { initiator = "true", id = channels[content.attr.name], endpoint = endpoint })
         else
-            confupdate:tag("channel", { id = id, expire = 0, endpoint = endpoint }):up()
+            stanza:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = endpoint })
         end
-        confupdate:up()
+        local hasrtcpmux = nil
+        for description in content:childtags("description", xmlns_jingle_rtp) do
+            module:log("debug", "      description media %s", description.attr.media)
+            for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
+                module:log("debug", "        payload name %s", payload.attr.name)
+                stanza:add_child(payload)
+            end
+            hasrtcpmux = description:get_child("rtcp-mux")
+            for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
+                stanza:add_child(group)
+            end
+        end
+        for transport in content:childtags("transport", xmlns_jingle_ice) do
+            module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
+            for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
+              module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
+            end
+            for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
+              module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
+            end
+            -- colibri puts rtcp-mux inside transport (which is probably the right thing to do)
+            if hasrtcpmux then
+                transport:tag("rtcp-mux"):up()
+            end
+            stanza:add_child(transport)
+        end
+        stanza:up() -- channel
+        stanza:up() -- content
     end
-    module:send(confupdate);
 end
 
---
+-- expires channels for a single endpoint
+local function expire_channels(stanza, channels, endpoint)
+    -- FIXME: endpoint should not be required
+    for name, id in pairs(channels) do
+        stanza:tag("content", { name = name })
+        if name == "data" then
+            stanza:tag("sctpconnection", { id = id, expire = 0, endpoint = endpoint }):up()
+        else
+            stanza:tag("channel", { id = id, expire = 0, endpoint = endpoint }):up()
+        end
+        stanza:up()
+    end
+end
+
+-- picking a bridge, simplistic version
+local function pick_bridge(roomjid)
+    return focus_media_bridge
+end
+
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
---
-local function handle_join(event)
+-- possibly we need to hook muc-occupant-session-new instead 
+-- for cases where a participant joins with twice
+module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
         local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
 
+        local bridge = roomjid2bridge[room.jid]
+        if not bridge then -- pick a bridge 
+            roomjid2bridge[room.jid] = pick_bridge(room.jid)
+            bridge = roomjid2bridge[room.jid] 
+        end
+
         -- if there are now two occupants, create a conference
         -- look at room._occupants size?
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
-        module:log("debug", "room jid %s bridge %s", room.jid, focus_media_bridge)
+        module:log("debug", "room jid %s bridge %s", room.jid, bridge)
 
         -- check client caps
         -- currently hardcoded
@@ -190,7 +246,7 @@ local function handle_join(event)
 
         jid2room[room.jid] = room
 
-        local confcreate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
+        local confcreate = st.iq({ from = room.jid, to = bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
         if roomjid2conference[room.jid] == nil then -- create a conference
             module:log("debug", "creating conference for %s", room.jid)
@@ -201,7 +257,7 @@ local function handle_join(event)
             -- FIXME push to a queue that is sent once we get the callback 
             -- for the create request
             module:log("debug", "FIXME new participant while conference creation is pending")
-            return true;
+            return
         else -- update existing conference
             module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
             confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
@@ -213,19 +269,14 @@ local function handle_join(event)
         -- just with different participants
 
         create_channels(confcreate, endpoints[room.jid])
-        module:send(confcreate);
         callbacks[confcreate.attr.id] = pending[room.jid]
         pending[room.jid] = nil
         endpoints[room.jid] = nil
         module:log("debug", "send_colibri %s", tostring(confcreate))
-        return 
-end
-module:hook("muc-occupant-joined", handle_join, 2);
--- possibly we need to hook muc-occupant-session-new instead 
--- for cases where a participant joins with twice
+        module:send(confcreate);
+end, 2)
 
-local function handle_leave(event)
-        -- why doesn't this pass the stanza?
+module:hook("muc-occupant-left", function (event) 
         local room, nick = event.room, event.nick
         local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_leave %s %s, #occupants %d", 
@@ -234,6 +285,8 @@ local function handle_leave(event)
         -- less than two participants in the room
         -- optimization: keep the conference a little longer
         -- to allow for fast rejoins
+
+        local bridge = roomjid2bridge[room.jid]
 
         if participant2sources[room.jid] and participant2sources[room.jid][nick] then
             local sources = participant2sources[room.jid][nick]
@@ -283,8 +336,11 @@ local function handle_leave(event)
         local channels = jid2channels[nick] 
         local confid = roomjid2conference[room.jid]
         if channels then
-            expire_channels(room.jid, channels, nick)
+            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                :tag("conference", { xmlns = xmlns_colibri, id = confid })
+            expire_channels(confupdate, channels, nick)
             jid2channels[nick] = nil
+            module:send(confupdate);
         else
             --module:log("debug", "handle_leave: no channels found")
         end
@@ -305,7 +361,7 @@ local function handle_leave(event)
             end
 
             -- clean up the channel of that participant
-            local confupdate = st.iq({ from = room.jid, to = focus_media_bridge, type = "set" })
+            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
                 :tag("conference", { xmlns = xmlns_colibri, id = confid })
 
             -- set remaining participant as pending
@@ -317,8 +373,11 @@ local function handle_leave(event)
 
                 channels = jid2channels[nick]
                 if (channels) then
-                    expire_channels(room.jid, channels, nick)
+                    local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                        :tag("conference", { xmlns = xmlns_colibri, id = confid })
+                    expire_channels(confupdate, channels, nick)
                     jid2channels[nick] = nil
+                    module:send(confupdate);
                 end
             end
 
@@ -331,11 +390,11 @@ local function handle_leave(event)
         if count == 0 then
             pending[room.jid] = nil
             endpoints[room.jid] = nil
+            roomjid2bridge[room.jid] = nil
         end
 
         return 
-end
-module:hook("muc-occupant-left", handle_leave, 2);
+end, 2);
 
 -- the static parts of the audio description we send
 local function add_audio_description(stanza)
@@ -374,8 +433,7 @@ local function add_video_description(stanza)
 end
 
 -- things we do when a room receives a COLIBRI stanza from the bridge 
---
-local function handle_colibri(event)
+module:hook("iq/bare", function (event)
         local stanza = event.stanza
 
         if stanza.attr.type == "error" then
@@ -394,6 +452,13 @@ local function handle_colibri(event)
         module:log("debug", "conf id %s", confid)
 
         local roomjid = stanza.attr.to
+
+        -- assert the sender is the bridge associated with this room
+        if stanza.attr.from ~= roomjid2bridge[roomjid] then
+            module:log("debug", "handle_colibri fake sender %s expected %s", stanza.attr.from, roomjid2bridge[roomjid])
+            return
+        end
+
         if callbacks[stanza.attr.id] == nil then return true; end
         module:log("debug", "handle_colibri %s", tostring(event.stanza))
 
@@ -517,11 +582,10 @@ local function handle_colibri(event)
 
         -- if receive conference with known ID but unknown channel ID...
         return true
-end
-module:hook("iq/bare", handle_colibri, 2);
+end, 2);
 
-local function handle_jingle(event)
-        -- process incoming Jingle stanzas from clients
+-- process incoming Jingle stanzas from clients
+module:hook("iq/bare", function (event) 
         local session, stanza = event.origin, event.stanza;
         local jingle = stanza:get_child("jingle", xmlns_jingle)
         if jingle == nil then return; end
@@ -545,6 +609,7 @@ local function handle_jingle(event)
         local confid = roomjid2conference[roomjid]
         local action = jingle.attr.action
         local sender = room:get_occupant_by_real_jid(stanza.attr.from)
+        local bridge = roomjid2bridge[room.jid]
 
         -- iterate again to look at the SSMA source elements
         -- FIXME: only for session-accept and source-add / source-remove?
@@ -636,55 +701,18 @@ local function handle_jingle(event)
             end
         end
 
+        -- update the channels
         local channels = jid2channels[sender.nick]
-        local confupdate = st.iq({ from = roomjid, to = focus_media_bridge, type = "set" })
+        local confupdate = st.iq({ from = roomjid, to = bridge, type = "set" })
             :tag("conference", { xmlns = xmlns_colibri, id = confid })
+        update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
 
-        for content in jingle:childtags("content", xmlns_jingle) do
-            module:log("debug", "    content name %s", content.attr.name)
-            confupdate:tag("content", { name = content.attr.name })
-            if content.attr.name == "data" then
-                confupdate:tag("sctpconnection", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
-            else
-                confupdate:tag("channel", { initiator = "true", id = channels[content.attr.name], endpoint = sender.nick })
-            end
-            local hasrtcpmux = nil
-            for description in content:childtags("description", xmlns_jingle_rtp) do
-                module:log("debug", "      description media %s", description.attr.media)
-                for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
-                    module:log("debug", "        payload name %s", payload.attr.name)
-                    confupdate:add_child(payload)
-                end
-                hasrtcpmux = description:get_child("rtcp-mux")
-                for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
-                    confupdate:add_child(group)
-                end
-            end
-            for transport in content:childtags("transport", xmlns_jingle_ice) do
-                module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)
-                for fingerprint in transport:childtags("fingerprint", xmlns_jingle_dtls) do
-                  module:log("debug", "        dtls fingerprint hash %s %s", fingerprint.attr.hash, fingerprint:get_text())
-                end
-                for candidate in transport:childtags("candidate", xmlns_jingle_ice) do
-                  module:log("debug", "        candidate ip %s port %s", candidate.attr.ip, candidate.attr.port)
-                end
-                -- colibri puts rtcp-mux inside transport (which is probably the right thing to do)
-                if hasrtcpmux then
-                    transport:tag("rtcp-mux"):up()
-                end
-                confupdate:add_child(transport)
-            end
-            confupdate:up() -- channel
-            confupdate:up() -- content
-        end
         module:log("debug", "confupdate is %s", tostring(confupdate))
         module:send(confupdate);
 
         session.send(st.reply(stanza))
         return true;
-end
-module:hook("iq/bare", handle_jingle, 2);
-
+end, 2);
 --
 -- end Jingle functions
 --
@@ -701,6 +729,8 @@ end);
 local function handle_pubsub(event)
         -- process incoming pubsub stanzas from the bridge
         local origin, stanza = event.origin, event.stanza;
+
+        -- FXIME: need to handle multiple bridges here
         if stanza.attr.from ~= focus_media_bridge then return; end
         local pubsub = stanza:get_child("pubsub", xmlns_pubsub)
         if pubsub == nil then return; end

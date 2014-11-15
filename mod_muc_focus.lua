@@ -14,17 +14,6 @@ XMPP clients and speaks COLIBRI (XEP-0340) to media bridges (e.g.
 media mixers and selective forwarding units like the Jitsi
 Videobridge).
 
-In particular, when a participant joins the room and advertises 
-support for the urn:xmpp:multimedia-muc feature, the module:
-  
-1. allocates a set of RTP/RTCP ports (called a "channel") on 
-   the media bridge, typically with one channel for audio and 
-   one for video (and potentially other channels, such as SCTP 
-   for WebRTC datachannels); this is done with COLIBRI (XEP-0340)
-
-2. sends a Jingle session-initiate message from the MUC room's 
-   bare JID to the participant's real JID
-
 ]]
 
 --[[

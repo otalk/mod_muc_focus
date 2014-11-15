@@ -36,8 +36,6 @@ MUC domain...
 
     Component "conference.example.com" "muc"
               modules_enabled = { "mod_muc_focus" }
-
-              focus_mmuc = true
               focus_media_bridge = domain.name.of.bridge
 
 ]]
@@ -50,13 +48,18 @@ local setmetatable = setmetatable;
 --local host = module.get_host();
 
 -- get data from the configuration file
-local focus_mmuc = module:get_option_string("focus_mmuc"); -- all rooms do MMUC
 -- FIXME: at some point we might want to change focus_media_bridge to support multiple bridges, but for bootstrapping purposes we support only one
 local focus_media_bridge = module:get_option_string("focus_media_bridge");
+
 -- FIXME: better to get the content types from room configuration or Jingle sessions?
 --local focus_content_types = module:get_option_array("focus_content_types");
-local focus_datachannels = true
-local usebundle = true
+
+local focus_datachannels = module:get_option_boolean("focus_feature_datachannel", true);
+local usebundle = module:get_option_boolean("focus_feature_bundle", true);
+
+-- a pubsub service and node to be subscribed for getting stats
+local focus_pubsub_service = module:get_option_string("focus_pubsub_service");
+local focus_pubsub_node = module:get_option_string("focus_pubsub_node", "videobridge");
 
 
 local iterators = require "util.iterators"
@@ -75,6 +78,7 @@ local xmlns_jingle_grouping = "urn:xmpp:jingle:apps:grouping:0";
 local xmlns_jingle_sctp = "urn:xmpp:jingle:transports:dtls-sctp:1";
 local xmlns_mmuc = "http://andyet.net/xmlns/mmuc"; -- multimedia muc
 local xmlns_pubsub = "http://jabber.org/protocol/pubsub";
+local xmlns_pubsub_event = "http://jabber.org/protocol/pubsub#event";
 
 -- advertise features
 module:add_feature(xmlns_colibri);
@@ -725,44 +729,44 @@ end);
 
 -- pubsub stats collector -- see
 -- https://github.com/jitsi/jitsi-videobridge/blob/master/doc/using_statistics.md
--- for more information
-local function handle_pubsub(event)
-        -- process incoming pubsub stanzas from the bridge
+module:hook("message/host", function (event)
+        -- process incoming pubsub stanzas from the pubsub node
         local origin, stanza = event.origin, event.stanza;
+        if stanza.attr.from ~= focus_pubsub_service then return; end
+        if stanza.attr.type ~= "headline" then return; end
 
-        -- FXIME: need to handle multiple bridges here
-        if stanza.attr.from ~= focus_media_bridge then return; end
-        local pubsub = stanza:get_child("pubsub", xmlns_pubsub)
-        if pubsub == nil then return; end
-        local publish = pubsub:get_child("publish", xmlns_pubsub)
-        if publish then
-            -- eventually this information will be used for load balancing
-            for item in publish:childtags("item", xmlns_pubsub) do
+        local ev = stanza:get_child("event", xmlns_pubsub_event)
+        if ev == nil then return; end
+
+        -- FIXME local items = ev:get_child("items", xmlns_pubsub_event)
+        for items in ev:children() do
+            if items.attr.node ~= focus_pubsub_node then return; end
+            for item in items:children() do -- FIXME: :childtags("item") do
                 for stats in item:childtags("stats", xmlns_colibri) do
                     local statstable = {}
                     for stat in stats:childtags("stat", xmlns_colibri) do
                         statstable[stat.attr.name] = stat.attr.value
                     end
-                    --module:log("debug", "stats: %s", serialization.serialize(statstable))
-                    module:fire_event("colibri-stats", { stats = stats, bridge = stanza.attr.from })
+                    --module:log("debug", "%s stats: %s", item.attr.publisher, serialization.serialize(statstable))
+
+                    -- FIXME: we could make mod_influxdb subscribe on its own... 
+                    module:fire_event("colibri-stats", { stats = stats, bridge = item.attr.publisher })
                 end
             end
-            origin.send(st.reply(stanza))
-            return true
         end
-        if pubsub:get_child("create", xmlns_pubsub) then
-            module:log("debug", "node created")
-            -- acknowledge node creation
-            origin.send(st.reply(stanza))
-            return true
-        end
-        if pubsub:get_child("configure", xmlns_pubsub) then
-            module:log("debug", "node configured")
-            -- acknowledge node configuration
-            origin.send(st.reply(stanza))
-            return true
-        end
+        return true
+end, 3)
+
+-- subscribe to the pubsub node
+if focus_pubsub_service then
+    -- wait until all hosts have been configured
+    module:add_timer(5, function () 
+        local sub = st.iq({ from = module:get_host(), to = focus_pubsub_service, type = "set" })
+        sub:tag("pubsub", {xmlns = xmlns_pubsub})
+          :tag("subscribe", {node = focus_pubsub_node, jid = module:get_host()}):up()
+        :up()
+        module:send(sub);
+    end)
 end
-module:hook("iq/host", handle_pubsub, 3);
 
 log("info", "mod_muc_focus loaded");

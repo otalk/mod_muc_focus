@@ -739,9 +739,9 @@ module:hook("message/host", function (event)
         if ev == nil then return; end
 
         -- FIXME local items = ev:get_child("items", xmlns_pubsub_event)
-        for items in ev:children() do
+        for items in ev:childtags("items") do
             if items.attr.node ~= focus_pubsub_node then return; end
-            for item in items:children() do -- FIXME: :childtags("item") do
+            for item in items:childtags("item") do
                 for stats in item:childtags("stats", xmlns_colibri) do
                     local statstable = {}
                     for stat in stats:childtags("stat", xmlns_colibri) do

@@ -33,6 +33,7 @@ MUC domain...
 local st = require "util.stanza";
 local jid  = require "util.jid";
 local config = require "core.configmanager";
+local os_time = os.time;
 local setmetatable = setmetatable;
 --local host = module.get_host();
 
@@ -103,6 +104,9 @@ local roomjid2bridge = {}
 
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
+
+-- bridges that have sent statistics recently
+local bridge_stats = {}
 
 
 -- channel functions: create, update, expire 
@@ -193,7 +197,34 @@ end
 
 -- picking a bridge, simplistic version
 local function pick_bridge(roomjid)
-    return focus_media_bridge
+    local choice = nil
+    local minval = nil
+    -- FIXME: clean up stale entries in bridge_stats here (or when adding a new one?)
+
+    -- look at bridge stats, search for the bridge with the minimum
+    -- up/download, participants, cpu
+    -- FIXME: currently min bitrate
+    for bridge, stats in pairs(bridge_stats) do
+        if not choice then
+            choice = bridge
+            minval = stats
+        else
+            if stats["bit_rate_upload"] + stats["bit_rate_download"] < minval["bit_rate_upload"] + minval["bit_rate_download"] then
+                choice = bridge
+                minval = stats
+            end
+        end
+    end
+    if minval then
+        module:log("debug", "picking bridge %s", choice)
+        module:log("debug", "metrics bitrate=%d",
+                   minval["bit_rate_upload"] + minval["bit_rate_download"])
+        module:log("debug", "bridge stat age %d", os_time() - minval["timestamp"])
+    else
+        module:log("debug", "picking default bridge %s", focus_media_bridge)
+    end
+    -- FIXME: choosing a bridge should move it down in the preference
+    return choice or focus_media_bridge
 end
 
 -- when someone joins the room, we request a channel for them on the bridge
@@ -719,31 +750,44 @@ end);
 -- pubsub stats collector -- see
 -- https://github.com/jitsi/jitsi-videobridge/blob/master/doc/using_statistics.md
 module:hook("message/host", function (event)
-        -- process incoming pubsub stanzas from the pubsub node
-        local origin, stanza = event.origin, event.stanza;
-        if stanza.attr.from ~= focus_pubsub_service then return; end
-        if stanza.attr.type ~= "headline" then return; end
+    -- process incoming pubsub stanzas from the pubsub node
+    local origin, stanza = event.origin, event.stanza;
+    if stanza.attr.from ~= focus_pubsub_service then return; end
+    if stanza.attr.type ~= "headline" then return; end
 
-        local ev = stanza:get_child("event", xmlns_pubsub_event)
-        if ev == nil then return; end
+    local ev = stanza:get_child("event", xmlns_pubsub_event)
+    if ev == nil then return; end
 
-        -- FIXME local items = ev:get_child("items", xmlns_pubsub_event)
-        for items in ev:childtags("items") do
-            if items.attr.node ~= focus_pubsub_node then return; end
-            for item in items:childtags("item") do
-                for stats in item:childtags("stats", xmlns_colibri) do
-                    local statstable = {}
-                    for stat in stats:childtags("stat", xmlns_colibri) do
-                        statstable[stat.attr.name] = stat.attr.value
-                    end
-                    --module:log("debug", "%s stats: %s", item.attr.publisher, serialization.serialize(statstable))
-
-                    -- FIXME: we could make mod_influxdb subscribe on its own... 
-                    module:fire_event("colibri-stats", { stats = stats, bridge = item.attr.publisher })
+    -- FIXME local items = ev:get_child("items", xmlns_pubsub_event)
+    for items in ev:childtags("items") do
+        if items.attr.node ~= focus_pubsub_node then return; end
+        for item in items:childtags("item") do
+            for stats in item:childtags("stats", xmlns_colibri) do
+                local statstable = {}
+                for stat in stats:childtags("stat", xmlns_colibri) do
+                    statstable[stat.attr.name] = stat.attr.value
                 end
+                --module:log("debug", "%s stats: %s", item.attr.publisher, serialization.serialize(statstable))
+
+                -- FIXME: we could make mod_influxdb subscribe on its own... 
+                module:fire_event("colibri-stats", { stats = statstable, bridge = item.attr.publisher })
             end
         end
-        return true
+    end
+    return true
+end, 3)
+
+-- process bridge statistics and determine most available bridge
+module:hook("colibri-stats", function (event)
+    local stats = {}
+    for key, value in pairs(event.stats) do
+        if key ~= "current_time" then
+            stats[key] = tonumber(value)
+        end
+    end
+    stats["timestamp"] = os_time()
+    bridge_stats[event.bridge] = stats
+    --module:log("debug", "all stats:\n%s", serialization.serialize(bridge_stats))
 end, 3)
 
 -- subscribe to the pubsub node

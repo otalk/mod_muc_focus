@@ -51,6 +51,9 @@ local usebundle = module:get_option_boolean("focus_feature_bundle", true);
 local focus_pubsub_service = module:get_option_string("focus_pubsub_service");
 local focus_pubsub_node = module:get_option_string("focus_pubsub_node", "videobridge");
 
+-- minimum number of participants to start doing the call
+local focus_min_participants = module:get_option_number("focus_min_participants", 2);
+
 
 local iterators = require "util.iterators"
 local serialization = require "util.serialization"
@@ -266,7 +269,7 @@ module:hook("muc-occupant-joined", function (event)
         pending[room.jid][#pending[room.jid]+1] = nick
         endpoints[room.jid][#endpoints[room.jid]+1] = nick
         module:log("debug", "pending %d count %d", #pending[room.jid], count)
-        if count == 1 then return; end
+        if count < focus_min_participants then return; end
 
         jid2room[room.jid] = room
 
@@ -369,7 +372,7 @@ module:hook("muc-occupant-left", function (event)
             --module:log("debug", "handle_leave: no channels found")
         end
 
-        if count == 1 then -- the room is empty
+        if count == focus_min_participants - 1 then -- not enough participants any longer
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local terminate = st.iq({ from = room.jid, type = "set" })
                 :tag("jingle", { xmlns = xmlns_jingle, action = "session-terminate", initiator = room.jid, sid = sid })
@@ -406,7 +409,7 @@ module:hook("muc-occupant-left", function (event)
             end
 
         end
-        if count <= 1 then
+        if count < focus_min_participants then
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
             participant2sources[room.jid] = nil

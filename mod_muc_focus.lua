@@ -46,6 +46,7 @@ local focus_media_bridge = module:get_option_string("focus_media_bridge");
 
 local focus_datachannels = module:get_option_boolean("focus_feature_datachannel", true);
 local usebundle = module:get_option_boolean("focus_feature_bundle", true);
+local usertx = module:get_option_boolean("focus_feature_rtx", false);
 
 -- a pubsub service and node to be subscribed for getting stats
 local focus_pubsub_service = module:get_option_string("focus_pubsub_service");

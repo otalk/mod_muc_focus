@@ -451,11 +451,13 @@ local function add_video_description(stanza)
         :up()
         :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
         :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
-        :tag("payload-type", { id = "96", name = "rtx", clockrate = "90000" })
+    if usertx then
+        stanza:tag("payload-type", { id = "96", name = "rtx", clockrate = "90000" })
             :tag("parameter", { name = "apt", value = "100" }):up()
         :up()
+    end
 
-        :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
+    stanza:tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
 
     if usebundle then

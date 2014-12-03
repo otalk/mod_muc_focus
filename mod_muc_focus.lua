@@ -446,7 +446,10 @@ local function add_video_description(stanza)
             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'goog-remb' }):up()
         :up()
         :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
-        --:tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
+        :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
+        :tag("payload-type", { id = "96", name = "rtx", clockrate = "90000" })
+            :tag("parameter", { name = "apt", value = "100" }):up()
+        :up()
 
         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "2", uri = "urn:ietf:params:rtp-hdrext:toffset" }):up()
         :tag("rtp-hdrext", { xmlns= xmlns_jingle_rtp_headerext, id = "3", uri = "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time" }):up()
@@ -661,8 +664,10 @@ module:hook("iq/bare", function (event)
                     module:log("debug", "source %s content %s", source.attr.ssrc, content.attr.name)
                 end
                 for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
-                    -- TODO
-                    --sourcelist[#sourcelist+1] = group 
+                    module:log("debug", "group semantics %s", group.attr.semantics)
+                    if group.attr.semantics == "FID" then
+                        sourcelist[#sourcelist+1] = group 
+                    end
                 end
                 sources[content.attr.name] = sourcelist 
             end
@@ -716,8 +721,9 @@ module:hook("iq/bare", function (event)
                 if occupant_jid ~= sender.nick then
                     module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))
                     local occupant = room:get_occupant_by_nick(occupant_jid)
-                    if (occupant) then -- FIXME: when does this happen
+                    if (occupant) then -- FIXME: when does this not happen
                         room:route_to_occupant(occupant, sourceadd)
+                        --module:log("debug", "%s %s", sendaction, tostring(sourceadd))
                     else
                         module:log("debug", "not found %s", sendaction)
                     end

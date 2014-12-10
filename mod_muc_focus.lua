@@ -97,6 +97,9 @@ local jid2channels = {} -- should actually contain the participant muc jid or be
 -- all the a=ssrc lines
 local participant2sources = {}
 
+-- all the msids
+local participant2msids = {}
+
 -- people waiting to join
 local pending = {}
 
@@ -335,6 +338,7 @@ module:hook("muc-occupant-left", function (event)
                 end
 
                 participant2sources[room.jid][nick] = nil
+                participant2msids[room.jid][nick] = nil
 
                 if count > 1 then -- will terminate session otherwise
                     for occupant_jid in iterators.keys(participant2sources[room.jid]) do
@@ -414,6 +418,7 @@ module:hook("muc-occupant-left", function (event)
             roomjid2conference[room.jid] = nil
             jid2room[room.jid] = nil
             participant2sources[room.jid] = nil
+            participant2msids[room.jid] = nil
         end
         if count == 0 then
             pending[room.jid] = nil
@@ -423,6 +428,23 @@ module:hook("muc-occupant-left", function (event)
 
         return 
 end, 2);
+
+module:hook("muc-broadcast-presence", function (event)
+    local room, occupant, stanza = event.room, event.occupant, event.stanza
+    -- occupant, actor, reason
+    if stanza.attr.type == "unavailable" then return; end
+    if not occupant then return; end
+    local nick = occupant.nick;
+    if not participant2msids[room.jid] then return; end
+    local msids = participant2msids[room.jid][nick]
+	if not msids then return; end
+
+    -- FIXME: needs to search for any msids the client sent and delete them
+    for msid, foo in pairs(msids) do
+        stanza:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid }):up()
+    end
+end, 2);
+
 
 -- the static parts of the audio description we send
 local function add_audio_description(stanza)
@@ -520,6 +542,9 @@ module:hook("iq/bare", function (event)
 
             if participant2sources[room.jid] == nil then
                 participant2sources[room.jid] = {}
+            end
+            if participant2msids[room.jid] == nil then
+                participant2msids[room.jid] = {}
             end
 
             local bundlegroup = {} 
@@ -685,6 +710,9 @@ module:hook("iq/bare", function (event)
         if participant2sources[room.jid] == nil then
             participant2sources[room.jid] = {}
         end
+        if participant2msids[room.jid] == nil then
+            participant2msids[room.jid] = {}
+        end
 
         if action == "session-accept" or action == "source-add" or action == "source-remove" then
             -- update participant presence with a <media xmlns=...><source type=audio ssrc=... direction=sendrecv/>...</media>
@@ -701,6 +729,7 @@ module:hook("iq/bare", function (event)
 			local x = st.stanza("x", {xmlns = "http://jabber.org/protocol/muc#user";});
             room:publicise_occupant_status(sender, x);
 
+            participant2msids[room.jid][sender.nick] = msids
 
             -- FIXME handle updates and removals
             participant2sources[room.jid][sender.nick] = sources

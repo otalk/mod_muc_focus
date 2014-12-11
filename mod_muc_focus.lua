@@ -439,7 +439,15 @@ module:hook("muc-broadcast-presence", function (event)
     local msids = participant2msids[room.jid][nick]
 	if not msids then return; end
 
-    -- FIXME: needs to search for any msids the client sent and delete them
+    -- filter any mmuc tags
+    stanza = st.clone(stanza)
+    stanza:maptags(function (tag)
+        if tag.attr.xmlns ~= xmlns_mmuc then
+            return tag
+        end
+    end);
+
+    -- stamp them onto it
     for msid, foo in pairs(msids) do
         stanza:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid }):up()
     end

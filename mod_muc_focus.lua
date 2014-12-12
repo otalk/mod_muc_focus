@@ -377,7 +377,7 @@ module:hook("muc-occupant-left", function (event)
             --module:log("debug", "handle_leave: no channels found")
         end
 
-        if count == focus_min_participants - 1 then -- not enough participants any longer
+        if count <= focus_min_participants - 1 then -- not enough participants any longer
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local terminate = st.iq({ from = room.jid, type = "set" })
                 :tag("jingle", { xmlns = xmlns_jingle, action = "session-terminate", initiator = room.jid, sid = sid })

@@ -429,10 +429,11 @@ module:hook("muc-occupant-left", function (event)
         return 
 end, 2);
 
-module:hook("muc-broadcast-presence", function (event)
-    local room, occupant, stanza = event.room, event.occupant, event.stanza
+module:hook("muc-occupant-pre-change", function (event)
+    local room, origin, stanza = event.room, event.origin, event.stanza
     -- occupant, actor, reason
     if stanza.attr.type == "unavailable" then return; end
+    local occupant = room:get_occupant_by_real_jid(stanza.attr.from)
     if not occupant then return; end
     local nick = occupant.nick;
     if not participant2msids[room.jid] then return; end
@@ -440,7 +441,6 @@ module:hook("muc-broadcast-presence", function (event)
 	if not msids then return; end
 
     -- filter any mmuc tags
-    stanza = st.clone(stanza)
     stanza:maptags(function (tag)
         if tag.attr.xmlns ~= xmlns_mmuc then
             return tag

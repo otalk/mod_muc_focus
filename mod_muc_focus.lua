@@ -74,14 +74,6 @@ local xmlns_mmuc = "http://andyet.net/xmlns/mmuc"; -- multimedia muc
 local xmlns_pubsub = "http://jabber.org/protocol/pubsub";
 local xmlns_pubsub_event = "http://jabber.org/protocol/pubsub#event";
 
--- advertise features
-module:add_feature(xmlns_colibri);
-module:add_feature(xmlns_jingle);
-module:add_feature(xmlns_jingle_ice);
-module:add_feature(xmlns_jingle_rtp);
-module:add_feature(xmlns_jingle_dtls);
---module:add_feature(xmlns_mmuc);
-
 -- we need an array that associates a room with a conference ID
 local conference_array = {};
 
@@ -792,7 +784,14 @@ end, 2);
 
 -- hook disco#info
 module:hook("muc-disco#info", function(event)
+    event.reply:tag("feature", {var = xmlns_jingle}):up();
+    event.reply:tag("feature", {var = xmlns_jingle_ice}):up();
+    event.reply:tag("feature", {var = xmlns_jingle_rtp}):up();
+    event.reply:tag("feature", {var = xmlns_jingle_dtls}):up();
+
     event.reply:tag("feature", {var = xmlns_mmuc}):up();
+    -- colibri doesn't matter to the client
+    --event.reply:tag("feature", {var = xmlns_colibri}):up();
 end);
 
 

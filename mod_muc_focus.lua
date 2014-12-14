@@ -510,7 +510,7 @@ module:hook("iq/bare", function (event)
 
         -- assert the sender is the bridge associated with this room
         if stanza.attr.from ~= roomjid2bridge[roomjid] then
-            module:log("debug", "handle_colibri fake sender %s expected %s", stanza.attr.from, roomjid2bridge[roomjid])
+            module:log("debug", "handle_colibri fake sender %s expected %s", stanza.attr.from, tostring(roomjid2bridge[roomjid]))
             return
         end
 
@@ -519,6 +519,10 @@ module:hook("iq/bare", function (event)
 
         roomjid2conference[roomjid] = confid
         local room = jid2room[roomjid]
+        if not room then
+            module:log("debug", "handle_colibri room %s already destroyed", roomjid)
+            return true
+        end
 
         --local occupant_jid = callbacks[stanza.attr.id]
         local occupants = {}
@@ -526,7 +530,9 @@ module:hook("iq/bare", function (event)
             -- FIXME: actually we want to get a particular session of an occupant, not all of them
             local occupant = room:get_occupant_by_nick(nick)
             module:log("debug", "occupant is %s", tostring(occupant))
-            occupants[idx] = occupant
+            if occupant then -- can be null sometimes apparently
+                occupants[#occupants+1] = occupant
+            end
         end
         callbacks[stanza.attr.id] = nil
 

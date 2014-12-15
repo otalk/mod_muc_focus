@@ -226,6 +226,23 @@ end
 
 -- remove a conference which is no longer needed
 local function linger_timeout(room)
+    local count = iterators.count(room:each_occupant());
+    module:log("debug", "linger timeout %d", count)
+    if count < focus_min_participants then
+        destroy_conference(room)
+    end
+end
+
+-- clean up any local state we have for this room
+local function cleanup_room(room)
+    pending[room.jid] = nil
+    endpoints[room.jid] = nil
+    jid2room[room.jid] = nil
+    -- possibly also, just to make sure they are cleaned up
+    roomjid2bridge[room.jid] = nil
+    roomjid2conference[room.jid] = nil
+    participant2sources[room.jid] = nil
+    participant2msids[room.jid] = nil
 end
 
 -- terminate the jingle sessions, 
@@ -234,6 +251,7 @@ end
 local function destroy_conference(room)
     -- terminate the jingle sessions
     local sid = roomjid2conference[room.jid] -- uses the id from the bridge
+    if not sid then return; end
     local terminate = st.iq({ from = room.jid, type = "set" })
         :tag("jingle", { xmlns = xmlns_jingle, action = "session-terminate", initiator = room.jid, sid = sid })
           :tag("reason")
@@ -241,6 +259,7 @@ local function destroy_conference(room)
           :up()
         :up()
     if participant2sources[room.jid] then -- FIXME: will not work for listen-only participants
+        -- the intent is to send a session-terminate to anyone we have a session with
         for occupant_jid in iterators.keys(participant2sources[room.jid]) do
             local occupant = room:get_occupant_by_nick(occupant_jid)
             if occupant then room:route_to_occupant(occupant, terminate) end
@@ -270,6 +289,19 @@ local function destroy_conference(room)
     end
     if count > 0 then
         module:send(confupdate);
+    end
+
+    count = iterators.count(room:each_occupant());
+    -- do all the cleanup stuff
+    if count < focus_min_participants then
+        roomjid2bridge[room.jid] = nil
+        roomjid2conference[room.jid] = nil
+        participant2sources[room.jid] = nil
+        participant2msids[room.jid] = nil
+    end
+    -- final cleanup, just in case
+    if count == 0 then
+        cleanup_room(room)
     end
 end
 
@@ -331,7 +363,6 @@ module:hook("muc-occupant-joined", function (event)
         else -- update existing conference
             module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
             confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
-            -- might be lingering so remove linger timer
         end
 
         -- FIXME: careful about marking this as in progress and dealing with the following scenario:
@@ -420,21 +451,11 @@ module:hook("muc-occupant-left", function (event)
         if count < focus_min_participants then -- not enough participants any longer
             destroy_conference(room)
         end
-        if count < focus_min_participants then
-            roomjid2conference[room.jid] = nil
-            jid2room[room.jid] = nil
-            participant2sources[room.jid] = nil
-            participant2msids[room.jid] = nil
-            -- start linger cleanup timer
-        end
-        if count == 0 then
-            pending[room.jid] = nil
-            endpoints[room.jid] = nil
-            roomjid2bridge[room.jid] = nil
-            -- remove linger timer
-        end
 
-        return 
+        -- final cleanup
+        if count == 0 then
+            cleanup_room(room)
+        end
 end, 2);
 
 module:hook("muc-occupant-pre-change", function (event)

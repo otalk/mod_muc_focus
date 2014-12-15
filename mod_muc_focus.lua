@@ -55,6 +55,10 @@ local focus_pubsub_node = module:get_option_string("focus_pubsub_node", "videobr
 -- minimum number of participants to start doing the call
 local focus_min_participants = module:get_option_number("focus_min_participants", 2);
 
+-- time to wait before terminate a conference after the number of particpants has dropped
+-- below the minimum number. Off by default until this is fully tested
+local focus_linger_time = module:get_option_number("focus_linger_time", 0);
+
 
 local iterators = require "util.iterators"
 local serialization = require "util.serialization"
@@ -107,9 +111,7 @@ local callbacks = {}
 -- bridges that have sent statistics recently
 local bridge_stats = {}
 
-
 -- channel functions: create, update, expire 
-
 -- create channels for multiple endpoints
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
@@ -224,6 +226,87 @@ local function pick_bridge(roomjid)
     end
     -- FIXME: choosing a bridge should move it down in the preference
     return choice or focus_media_bridge
+end
+
+-- remove a conference which is no longer needed
+local function linger_timeout(room)
+    local count = iterators.count(room:each_occupant());
+    module:log("debug", "linger timeout %d", count)
+    if count < focus_min_participants then
+        destroy_conference(room)
+    end
+end
+
+-- clean up any local state we have for this room
+local function cleanup_room(room)
+    pending[room.jid] = nil
+    endpoints[room.jid] = nil
+    jid2room[room.jid] = nil
+    -- possibly also, just to make sure they are cleaned up
+    roomjid2bridge[room.jid] = nil
+    roomjid2conference[room.jid] = nil
+    participant2sources[room.jid] = nil
+    participant2msids[room.jid] = nil
+end
+
+-- terminate the jingle sessions, 
+-- set any participants in the room as pending
+-- and expire any channels for a conference,
+local function destroy_conference(room)
+    -- terminate the jingle sessions
+    local sid = roomjid2conference[room.jid] -- uses the id from the bridge
+    if not sid then return; end
+    local terminate = st.iq({ from = room.jid, type = "set" })
+        :tag("jingle", { xmlns = xmlns_jingle, action = "session-terminate", initiator = room.jid, sid = sid })
+          :tag("reason")
+            :tag("success"):up()
+          :up()
+        :up()
+    if participant2sources[room.jid] then -- FIXME: will not work for listen-only participants
+        -- the intent is to send a session-terminate to anyone we have a session with
+        for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+            local occupant = room:get_occupant_by_nick(occupant_jid)
+            if occupant then room:route_to_occupant(occupant, terminate) end
+        end
+    end
+    local confid = roomjid2conference[room.jid]
+    local count = 0
+
+    -- set any participants as pending
+    pending[room.jid] = {}
+    endpoints[room.jid] = {}
+    for nick, occupant in room:each_occupant() do
+        pending[room.jid][#pending[room.jid]+1] = nick
+        endpoints[room.jid][#endpoints[room.jid]+1] = nick
+    end
+
+    -- expire any channels
+    local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+        :tag("conference", { xmlns = xmlns_colibri, id = confid })
+    for nick, occupant in room:each_occupant() do
+        channels = jid2channels[nick]
+        if (channels) then
+            expire_channels(confupdate, channels, nick)
+            jid2channels[nick] = nil
+            count = count + 1
+        end
+    end
+    if count > 0 then
+        module:send(confupdate);
+    end
+
+    count = iterators.count(room:each_occupant());
+    -- do all the cleanup stuff
+    if count < focus_min_participants then
+        roomjid2bridge[room.jid] = nil
+        roomjid2conference[room.jid] = nil
+        participant2sources[room.jid] = nil
+        participant2msids[room.jid] = nil
+    end
+    -- final cleanup, just in case
+    if count == 0 then
+        cleanup_room(room)
+    end
 end
 
 -- when someone joins the room, we request a channel for them on the bridge
@@ -369,56 +452,20 @@ module:hook("muc-occupant-left", function (event)
             --module:log("debug", "handle_leave: no channels found")
         end
 
-        if count <= focus_min_participants - 1 then -- not enough participants any longer
-            local sid = roomjid2conference[room.jid] -- uses the id from the bridge
-            local terminate = st.iq({ from = room.jid, type = "set" })
-                :tag("jingle", { xmlns = xmlns_jingle, action = "session-terminate", initiator = room.jid, sid = sid })
-                  :tag("reason")
-                    :tag("success"):up()
-                  :up()
-                :up()
-            if participant2sources[room.jid] then
-                for occupant_jid in iterators.keys(participant2sources[room.jid]) do
-                    local occupant = room:get_occupant_by_nick(occupant_jid)
-                    if occupant then room:route_to_occupant(occupant, terminate) end
-                end
+        if count < focus_min_participants then -- not enough participants any longer
+            if focus_linger_time > 0 then
+                module:add_timer(focus_linger_time, function () 
+                    destroy_conference(room)
+                end);
+            else -- immediate destroy, default for now
+                destroy_conference(room)
             end
-
-            -- clean up the channel of that participant
-            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
-                :tag("conference", { xmlns = xmlns_colibri, id = confid })
-
-            -- set remaining participant as pending
-            pending[room.jid] = {}
-            endpoints[room.jid] = {}
-            for nick, occupant in room:each_occupant() do
-                pending[room.jid][#pending[room.jid]+1] = nick
-                endpoints[room.jid][#endpoints[room.jid]+1] = nick
-
-                channels = jid2channels[nick]
-                if (channels) then
-                    local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
-                        :tag("conference", { xmlns = xmlns_colibri, id = confid })
-                    expire_channels(confupdate, channels, nick)
-                    jid2channels[nick] = nil
-                    module:send(confupdate);
-                end
-            end
-
         end
-        if count < focus_min_participants then
-            roomjid2conference[room.jid] = nil
-            jid2room[room.jid] = nil
-            participant2sources[room.jid] = nil
-            participant2msids[room.jid] = nil
-        end
+
+        -- final cleanup
         if count == 0 then
-            pending[room.jid] = nil
-            endpoints[room.jid] = nil
-            roomjid2bridge[room.jid] = nil
+            cleanup_room(room)
         end
-
-        return 
 end, 2);
 
 module:hook("muc-occupant-pre-change", function (event)

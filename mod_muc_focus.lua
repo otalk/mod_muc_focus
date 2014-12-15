@@ -55,6 +55,10 @@ local focus_pubsub_node = module:get_option_string("focus_pubsub_node", "videobr
 -- minimum number of participants to start doing the call
 local focus_min_participants = module:get_option_number("focus_min_participants", 2);
 
+-- time to wait before terminate a conference after the number of particpants has dropped
+-- below the minimum number. Off by default until this is fully tested
+local focus_linger_time = module:get_option_number("focus_linger_time", 0);
+
 
 local iterators = require "util.iterators"
 local serialization = require "util.serialization"
@@ -449,7 +453,13 @@ module:hook("muc-occupant-left", function (event)
         end
 
         if count < focus_min_participants then -- not enough participants any longer
-            destroy_conference(room)
+            if focus_linger_time > 0 then
+                module:add_timer(focus_linger_time, function () 
+                    destroy_conference(room)
+                end);
+            else -- immediate destroy, default for now
+                destroy_conference(room)
+            end
         end
 
         -- final cleanup

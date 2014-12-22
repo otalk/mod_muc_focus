@@ -281,6 +281,7 @@ local function destroy_conference(room)
     end
 
     -- expire any channels
+    local bridge = roomjid2bridge[room.jid]
     local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
         :tag("conference", { xmlns = xmlns_colibri, id = confid })
     for nick, occupant in room:each_occupant() do

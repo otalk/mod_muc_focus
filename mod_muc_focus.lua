@@ -242,6 +242,8 @@ local function cleanup_room(room)
     pending[room.jid] = nil
     endpoints[room.jid] = nil
     jid2room[room.jid] = nil
+
+    jid2channels[room.jid] = nil;
     -- possibly also, just to make sure they are cleaned up
     roomjid2bridge[room.jid] = nil
     roomjid2conference[room.jid] = nil
@@ -284,13 +286,18 @@ local function destroy_conference(room)
     local bridge = roomjid2bridge[room.jid]
     local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
         :tag("conference", { xmlns = xmlns_colibri, id = confid })
-    for nick, occupant in room:each_occupant() do
-        channels = jid2channels[nick]
-        if (channels) then
-            expire_channels(confupdate, channels, nick)
-            jid2channels[nick] = nil
-            count = count + 1
+    if jid2channels[room.jid] then
+        for nick, occupant in room:each_occupant() do
+            channels = jid2channels[room.jid][nick]
+            if (channels) then
+                expire_channels(confupdate, channels, nick)
+                jid2channels[room.jid][nick] = nil
+                count = count + 1
+            end
         end
+    end
+    if #jid2channels[room.jid] == 0 then
+        jid2channels[room.jid] = nil
     end
     if count > 0 then
         module:send(confupdate);
@@ -441,16 +448,21 @@ module:hook("muc-occupant-left", function (event)
         end
 
         -- we close those channels by setting their expire to 0
-        local channels = jid2channels[nick] 
         local confid = roomjid2conference[room.jid]
-        if channels then
-            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
-                :tag("conference", { xmlns = xmlns_colibri, id = confid })
-            expire_channels(confupdate, channels, nick)
-            jid2channels[nick] = nil
-            module:send(confupdate);
-        else
-            --module:log("debug", "handle_leave: no channels found")
+        if jid2channels[room.jid] then
+            local channels = jid2channels[room.jid][nick] 
+            if channels then
+                local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                    :tag("conference", { xmlns = xmlns_colibri, id = confid })
+                expire_channels(confupdate, channels, nick)
+                jid2channels[room.jid][nick] = nil
+                module:send(confupdate);
+            else
+                --module:log("debug", "handle_leave: no channels found")
+            end
+            if #jid2channels[room.jid] == 0 then
+                jid2channels[room.jid] = nil
+            end
         end
 
         if count < focus_min_participants then -- not enough participants any longer
@@ -595,7 +607,10 @@ module:hook("iq/bare", function (event)
 
             local occupant = occupants[channelnumber]
             local occupant_jid = occupant.nick
-            jid2channels[occupant_jid] = {}
+            if not jid2channels[room.jid] then
+                jid2channels[room.jid] = {}
+            end
+            jid2channels[room.jid][occupant_jid] = {}
 
             if participant2sources[room.jid] == nil then
                 participant2sources[room.jid] = {}
@@ -612,7 +627,7 @@ module:hook("iq/bare", function (event)
                 initiate:tag("content", { creator = "initiator", name = content.attr.name, senders = "both" })
                 if content.attr.name == "audio" or content.attr.name == "video" then
                     channel = iterators.to_array(content:childtags("channel", xmlns_colibri))[channelnumber]
-                    jid2channels[occupant_jid][content.attr.name] = channel.attr.id
+                    jid2channels[room.jid][occupant_jid][content.attr.name] = channel.attr.id
 
                     initiate:tag("description", { xmlns = xmlns_jingle_rtp, media = content.attr.name })
                     if content.attr.name == "audio" then
@@ -632,7 +647,7 @@ module:hook("iq/bare", function (event)
                 elseif content.attr.name == "data" then
                     -- data channels are handled slightly different
                     channel = iterators.to_array(content:childtags("sctpconnection", xmlns_colibri))[channelnumber]
-                    jid2channels[occupant_jid][content.attr.name] = channel.attr.id
+                    jid2channels[room.jid][occupant_jid][content.attr.name] = channel.attr.id
                     initiate:tag("description", { xmlns = "http://talky.io/ns/datachannel" })
                         -- no description yet. describe the channels?
                     :up()
@@ -721,7 +736,7 @@ module:hook("iq/bare", function (event)
         -- FIXME: ignore jingle not addressed to this host
         -- and stanzas not addressed to the rooms bare jid
         local room = jid2room[roomjid]
-        local confid = roomjid2conference[roomjid]
+        local confid = roomjid2conference[room.jid]
         local action = jingle.attr.action
         local sender = room:get_occupant_by_real_jid(stanza.attr.from)
         local bridge = roomjid2bridge[room.jid]
@@ -795,8 +810,8 @@ module:hook("iq/bare", function (event)
             if action == "source-remove" then
                 sendaction = "source-remove"
             end
-            local sourceadd = st.iq({ from = roomjid, type = "set" })
-                :tag("jingle", { xmlns = xmlns_jingle, action = sendaction, initiator = roomjid, sid = sid })
+            local sourceadd = st.iq({ from = room.jid, type = "set" })
+                :tag("jingle", { xmlns = xmlns_jingle, action = sendaction, initiator = room.jid, sid = sid })
             for name, sourcelist in pairs(sources) do
                 sourceadd:tag("content", { creator = "initiator", name = name, senders = "both" })
                     :tag("description", { xmlns = xmlns_jingle_rtp, media = name })
@@ -824,8 +839,8 @@ module:hook("iq/bare", function (event)
         end
 
         -- update the channels
-        local channels = jid2channels[sender.nick]
-        local confupdate = st.iq({ from = roomjid, to = bridge, type = "set" })
+        local channels = jid2channels[room.jid][sender.nick]
+        local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
             :tag("conference", { xmlns = xmlns_colibri, id = confid })
         update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
 

@@ -558,7 +558,9 @@ module:hook("iq/bare", function (event)
 
         -- assert the sender is the bridge associated with this room
         if stanza.attr.from ~= roomjid2bridge[roomjid] then
-            module:log("debug", "handle_colibri fake sender %s expected %s", stanza.attr.from, tostring(roomjid2bridge[roomjid]))
+            if roomjid2bridge[roomjid] ~= nil then
+                module:log("debug", "handle_colibri fake sender %s expected %s", stanza.attr.from, tostring(roomjid2bridge[roomjid]))
+            end
             return
         end
 

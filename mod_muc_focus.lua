@@ -889,7 +889,6 @@ module:hook("message/host", function (event)
                 end
                 --module:log("debug", "%s stats: %s", item.attr.publisher, serialization.serialize(statstable))
 
-                -- FIXME: we could make mod_influxdb subscribe on its own... 
                 module:fire_event("colibri-stats", { stats = statstable, bridge = item.attr.publisher })
             end
         end

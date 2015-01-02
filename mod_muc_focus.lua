@@ -296,7 +296,7 @@ local function destroy_conference(room)
             end
         end
     end
-    if #jid2channels[room.jid] == 0 then
+    if jid2channels[room.jid] and #jid2channels[room.jid] == 0 then
         jid2channels[room.jid] = nil
     end
     if count > 0 then

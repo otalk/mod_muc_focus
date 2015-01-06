@@ -111,6 +111,31 @@ local callbacks = {}
 -- bridges that have sent statistics recently
 local bridge_stats = {}
 
+local function is_capable(occupant)
+    local stanza = occupant:get_presence()
+    -- check client caps
+    -- currently hardcoded
+    local caps = stanza:get_child("c", "http://jabber.org/protocol/caps")
+    if caps then
+        -- ignore Firefox
+        -- FIXME: the proper way to do this is lookup the caps and check for something there
+        if caps.attr.node == "https://talky.io/moz" then
+            return false
+        end
+    end
+    return true
+end
+
+local function count_capable_occupants(room)
+    local count = 0
+    for nick, occupant in room:each_occupant() do
+        if is_capable(occupant) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 -- channel functions: create, update, expire 
 -- create channels for multiple endpoints
 local function create_channels(stanza, endpoints)
@@ -230,7 +255,7 @@ end
 
 -- remove a conference which is no longer needed
 local function linger_timeout(room)
-    local count = iterators.count(room:each_occupant());
+    local count = count_capable_occupants(room)
     module:log("debug", "linger timeout %d", count)
     if count < focus_min_participants then
         destroy_conference(room)
@@ -278,8 +303,10 @@ local function destroy_conference(room)
     pending[room.jid] = {}
     endpoints[room.jid] = {}
     for nick, occupant in room:each_occupant() do
-        pending[room.jid][#pending[room.jid]+1] = nick
-        endpoints[room.jid][#endpoints[room.jid]+1] = nick
+        if is_capable(occupant) then
+            pending[room.jid][#pending[room.jid]+1] = nick
+            endpoints[room.jid][#endpoints[room.jid]+1] = nick
+        end
     end
 
     -- expire any channels
@@ -303,6 +330,7 @@ local function destroy_conference(room)
         module:send(confupdate);
     end
 
+    -- FIXME: count only capable clients
     count = iterators.count(room:each_occupant());
     -- do all the cleanup stuff
     if count < focus_min_participants then
@@ -324,8 +352,8 @@ end
 module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
-        local count = iterators.count(room:each_occupant());
-		module:log("debug", "handle_join %s %s %s", 
+        local count = count_capable_occupants(room)
+        module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
 
         local bridge = roomjid2bridge[room.jid]
@@ -339,15 +367,8 @@ module:hook("muc-occupant-joined", function (event)
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
         module:log("debug", "room jid %s bridge %s", room.jid, bridge)
 
-        -- check client caps
-        -- currently hardcoded
-		local caps = stanza:get_child("c", "http://jabber.org/protocol/caps")
-        if caps then
-            module:log("debug", "caps ver %s", caps.attr.ver)
-            -- currently jts2118m3Eaq5FILAt7qGmRc+8M= is firefox without colibri/multistream support
-            if caps.attr.ver == "jts2118m3Eaq5FILAt7qGmRc+8M=" then
-                return 
-            end
+        if not is_capable(occupant) then
+            return
         end
 
         -- FIXME: this doesn't allow us to clean up on leave
@@ -392,7 +413,7 @@ end, 2)
 
 module:hook("muc-occupant-left", function (event) 
         local room, nick = event.room, event.nick
-        local count = iterators.count(room:each_occupant());
+        local count = count_capable_occupants(room)
 		module:log("debug", "handle_leave %s %s, #occupants %d", 
                    tostring(room), tostring(nick), count);
         -- same here, remove conference when there are now
@@ -593,7 +614,7 @@ module:hook("iq/bare", function (event)
             -- FIXME: actually we want to get a particular session of an occupant, not all of them
             local occupant = room:get_occupant_by_nick(nick)
             module:log("debug", "occupant is %s", tostring(occupant))
-            if occupant then -- can be null sometimes apparently
+            if occupant then
                 occupants[#occupants+1] = occupant
             end
         end
@@ -828,7 +849,7 @@ module:hook("iq/bare", function (event)
                 if occupant_jid ~= sender.nick then
                     module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))
                     local occupant = room:get_occupant_by_nick(occupant_jid)
-                    if (occupant) then -- FIXME: when does this not happen
+                    if (occupant and is_capable(occupant)) then
                         room:route_to_occupant(occupant, sourceadd)
                         --module:log("debug", "%s %s", sendaction, tostring(sourceadd))
                     else

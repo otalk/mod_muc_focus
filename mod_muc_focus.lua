@@ -889,7 +889,7 @@ module:hook("message/host", function (event)
                 end
                 --module:log("debug", "%s stats: %s", item.attr.publisher, serialization.serialize(statstable))
 
-                module:fire_event("colibri-stats", { stats = statstable, bridge = item.attr.publisher })
+                module:fire_event("jvb-stats", { stats = statstable, bridge = item.attr.publisher })
             end
         end
     end
@@ -897,7 +897,7 @@ module:hook("message/host", function (event)
 end, 3)
 
 -- process bridge statistics and determine most available bridge
-module:hook("colibri-stats", function (event)
+module:hook("jvb-stats", function (event)
     local stats = {}
     for key, value in pairs(event.stats) do
         if key ~= "current_time" then

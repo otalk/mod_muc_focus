@@ -332,7 +332,8 @@ end
 module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
-        local count = table.getn(sessions[room.jid] or {})
+        --local count = table.getn(sessions[room.jid] or {})
+        local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
 

@@ -399,15 +399,17 @@ module:hook("muc-occupant-joined", function (event)
         module:send(confcreate);
 end, 2)
 
-module:hook("muc-occupant-left", function (event) 
-        local room, nick = event.room, event.nick
-        local count = table.getn(sessions[room.jid] or {})
-		module:log("debug", "handle_leave %s %s, #occupants %d", 
-                   tostring(room), tostring(nick), count);
+local function remove_session(event) 
         -- same here, remove conference when there are now
-        -- less than two participants in the room
+        -- less than the minimum required number of participants in the room
         -- optimization: keep the conference a little longer
         -- to allow for fast rejoins
+        local room, nick = event.room, event.nick
+
+        if sessions[room.jid] then
+            sessions[room.jid][nick] = nil 
+        end
+        local count = table.getn(sessions[room.jid] or {})
 
         local bridge = roomjid2bridge[room.jid]
 
@@ -488,7 +490,8 @@ module:hook("muc-occupant-left", function (event)
         if count == 0 then
             cleanup_room(room)
         end
-end, 2);
+end
+module:hook("muc-occupant-left", remove_session, 2)
 
 module:hook("muc-occupant-pre-change", function (event)
     local room, origin, stanza = event.room, event.origin, event.stanza
@@ -759,9 +762,7 @@ module:hook("iq/bare", function (event)
         local sources = {}
 
         if action == "session-terminate" then
-            sessions[room.jid][sender.nick] = nil 
-            -- FIXME: deallocate things, very similar to participant leaving
-            -- should timeout currently
+            remove_session({room = room, nick = sender })
             return
         end
 

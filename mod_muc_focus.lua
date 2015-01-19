@@ -105,6 +105,9 @@ local endpoints = {}
 -- bridge associated with a room
 local roomjid2bridge = {}
 
+-- sessions inside a room
+local sessions = {}
+
 -- our custom *cough* iq callback mechanism
 local callbacks = {}
 
@@ -230,7 +233,7 @@ end
 
 -- remove a conference which is no longer needed
 local function linger_timeout(room)
-    local count = iterators.count(room:each_occupant());
+    local count = #sessions[room.jid]
     module:log("debug", "linger timeout %d", count)
     if count < focus_min_participants then
         destroy_conference(room)
@@ -244,6 +247,7 @@ local function cleanup_room(room)
     jid2room[room.jid] = nil
 
     jid2channels[room.jid] = nil;
+    sessions[room.jid] = nil
     -- possibly also, just to make sure they are cleaned up
     roomjid2bridge[room.jid] = nil
     roomjid2conference[room.jid] = nil
@@ -267,10 +271,14 @@ local function destroy_conference(room)
     if participant2sources[room.jid] then -- FIXME: will not work for listen-only participants
         -- the intent is to send a session-terminate to anyone we have a session with
         for occupant_jid in iterators.keys(participant2sources[room.jid]) do
-            local occupant = room:get_occupant_by_nick(occupant_jid)
-            if occupant then room:route_to_occupant(occupant, terminate) end
+            if sessions[room.jid] and sessions[room.jid][occupant_jid] then
+                local occupant = room:get_occupant_by_nick(occupant_jid)
+                if occupant then room:route_to_occupant(occupant, terminate) end
+            end
         end
     end
+    sessions[room.jid] = nil
+
     local confid = roomjid2conference[room.jid]
     local count = 0
 
@@ -303,7 +311,7 @@ local function destroy_conference(room)
         module:send(confupdate);
     end
 
-    count = iterators.count(room:each_occupant());
+    count = table.getn(sessions[room.jid])
     -- do all the cleanup stuff
     if count < focus_min_participants then
         roomjid2bridge[room.jid] = nil
@@ -324,6 +332,7 @@ end
 module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
+        --local count = table.getn(sessions[room.jid] or {})
         local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
@@ -392,7 +401,7 @@ end, 2)
 
 module:hook("muc-occupant-left", function (event) 
         local room, nick = event.room, event.nick
-        local count = iterators.count(room:each_occupant());
+        local count = table.getn(sessions[room.jid] or {})
 		module:log("debug", "handle_leave %s %s, #occupants %d", 
                    tostring(room), tostring(nick), count);
         -- same here, remove conference when there are now
@@ -600,6 +609,19 @@ module:hook("iq/bare", function (event)
         callbacks[stanza.attr.id] = nil
 
 
+        if sessions[room.jid] == nil then
+            sessions[room.jid] = {}
+        end
+        if participant2msids[room.jid] == nil then
+            participant2msids[room.jid] = {}
+        end
+        if not jid2channels[room.jid] then
+            jid2channels[room.jid] = {}
+        end
+        if participant2sources[room.jid] == nil then
+            participant2sources[room.jid] = {}
+        end
+
         for channelnumber = 1, #occupants do
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local initiate = st.iq({ from = roomjid, type = "set" })
@@ -607,17 +629,7 @@ module:hook("iq/bare", function (event)
 
             local occupant = occupants[channelnumber]
             local occupant_jid = occupant.nick
-            if not jid2channels[room.jid] then
-                jid2channels[room.jid] = {}
-            end
             jid2channels[room.jid][occupant_jid] = {}
-
-            if participant2sources[room.jid] == nil then
-                participant2sources[room.jid] = {}
-            end
-            if participant2msids[room.jid] == nil then
-                participant2msids[room.jid] = {}
-            end
 
             local bundlegroup = {} 
 
@@ -695,6 +707,7 @@ module:hook("iq/bare", function (event)
 
             -- preoccupy here
             participant2sources[room.jid][occupant_jid] = {}
+            sessions[room.jid][occupant_jid] = true
 
             room:route_to_occupant(occupant, initiate)
             --module:log("debug", "send_jingle %s", tostring(initiate))
@@ -744,6 +757,13 @@ module:hook("iq/bare", function (event)
         -- iterate again to look at the SSMA source elements
         -- FIXME: only for session-accept and source-add / source-remove?
         local sources = {}
+
+        if action == "session-terminate" then
+            sessions[room.jid][sender.nick] = nil 
+            -- FIXME: deallocate things, very similar to participant leaving
+            -- should timeout currently
+            return
+        end
 
         -- FIXME: there could be multiple msids per participant and content
         -- but we try to avoid that currently
@@ -824,15 +844,17 @@ module:hook("iq/bare", function (event)
             end
 
             -- sent to everyone but the sender
-            for occupant_jid in iterators.keys(participant2sources[room.jid]) do
-                if occupant_jid ~= sender.nick then
-                    module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))
-                    local occupant = room:get_occupant_by_nick(occupant_jid)
-                    if (occupant) then -- FIXME: when does this not happen
-                        room:route_to_occupant(occupant, sourceadd)
-                        --module:log("debug", "%s %s", sendaction, tostring(sourceadd))
-                    else
-                        module:log("debug", "not found %s", sendaction)
+            if sessions[room.jid] then
+                for occupant_jid in iterators.keys(participant2sources[room.jid]) do
+                    if occupant_jid ~= sender.nick and sessions[room.jid][occupant_jid] then
+                        module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))
+                        local occupant = room:get_occupant_by_nick(occupant_jid)
+                        if (occupant) then -- FIXME: when does this not happen?
+                            room:route_to_occupant(occupant, sourceadd)
+                            --module:log("debug", "%s %s", sendaction, tostring(sourceadd))
+                        else
+                            module:log("debug", "not found %s", sendaction)
+                        end
                     end
                 end
             end

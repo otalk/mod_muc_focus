@@ -325,6 +325,21 @@ local function destroy_conference(room)
     end
 end
 
+-- before someone joins we tell everyone that we're going to switch to 
+-- relayed mode soon
+module:hook("muc-occupant-pre-join", function(event)
+        local room, stanza = event.room, event.stanza;
+        if jid2room[room.jid] then return; end -- already in a conf
+
+        -- check if we are going to start a conference soon
+        local count = iterators.count(room:each_occupant());
+        if count == focus_min_participants - 1 then
+            local mode = st.message({ from = room.jid, type = "groupchat" })
+            mode:tag("status", { xmnls = xmlns_mmuc, mode = "relay" })
+            room:broadcast_message(mode);
+        end
+end, 100)
+
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
 -- possibly we need to hook muc-occupant-session-new instead 
@@ -475,6 +490,11 @@ module:hook("muc-occupant-left", function (event)
         end
 
         if count < focus_min_participants then -- not enough participants any longer
+            -- tell everyone to go back to p2p mode
+            local mode = st.message({ from = room.jid, type = "groupchat" })
+            mode:tag("status", { xmnls = xmlns_mmuc, mode = "p2p" })
+            room:broadcast_message(mode);
+
             if focus_linger_time > 0 then
                 module:add_timer(focus_linger_time, function () 
                     destroy_conference(room)

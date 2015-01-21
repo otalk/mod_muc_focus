@@ -311,7 +311,7 @@ local function destroy_conference(room)
         module:send(confupdate);
     end
 
-    count = table.getn(sessions[room.jid])
+    count = iterators.count(sessions[room.jid])
     -- do all the cleanup stuff
     if count < focus_min_participants then
         roomjid2bridge[room.jid] = nil
@@ -347,7 +347,7 @@ end, 100)
 module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
-        --local count = table.getn(sessions[room.jid] or {})
+        --local count = iterators.count(sessions[room.jid] or {})
         local count = iterators.count(room:each_occupant());
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
@@ -424,7 +424,7 @@ local function remove_session(event)
         if sessions[room.jid] then
             sessions[room.jid][nick] = nil 
         end
-        local count = table.getn(sessions[room.jid] or {})
+        local count = iterators.count(sessions[room.jid] or {})
 
         local bridge = roomjid2bridge[room.jid]
 

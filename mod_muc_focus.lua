@@ -233,7 +233,7 @@ end
 
 -- remove a conference which is no longer needed
 local function linger_timeout(room)
-    local count = #sessions[room.jid]
+    local count = iterators.count(pairs(sessions[room.jid]))
     module:log("debug", "linger timeout %d", count)
     if count < focus_min_participants then
         destroy_conference(room)
@@ -280,9 +280,10 @@ local function destroy_conference(room)
     sessions[room.jid] = nil
 
     local confid = roomjid2conference[room.jid]
-    local count = 0
 
     -- set any participants as pending
+    -- FIXME: well, not participants which are not capable so the
+    -- whole pending logic is probably obsolete
     pending[room.jid] = {}
     endpoints[room.jid] = {}
     for nick, occupant in room:each_occupant() do
@@ -291,6 +292,7 @@ local function destroy_conference(room)
     end
 
     -- expire any channels
+    local count = 0
     local bridge = roomjid2bridge[room.jid]
     local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
         :tag("conference", { xmlns = xmlns_colibri, id = confid })
@@ -303,23 +305,22 @@ local function destroy_conference(room)
                 count = count + 1
             end
         end
-    end
-    if jid2channels[room.jid] and #jid2channels[room.jid] == 0 then
-        jid2channels[room.jid] = nil
-    end
-    if count > 0 then
-        module:send(confupdate);
+        if iterators.count(jid2channels[room.jid]) == 0 then
+            jid2channels[room.jid] = nil
+        end
+        if count > 0 then
+            module:send(confupdate);
+        end
     end
 
-    count = iterators.count(sessions[room.jid])
     -- do all the cleanup stuff
-    if count < focus_min_participants then
-        roomjid2bridge[room.jid] = nil
-        roomjid2conference[room.jid] = nil
-        participant2sources[room.jid] = nil
-        participant2msids[room.jid] = nil
-    end
+    roomjid2bridge[room.jid] = nil
+    roomjid2conference[room.jid] = nil
+    participant2sources[room.jid] = nil
+    participant2msids[room.jid] = nil
+
     -- final cleanup, just in case
+    count = #pending[room.jid]
     if count == 0 then
         cleanup_room(room)
     end
@@ -424,7 +425,7 @@ local function remove_session(event)
         if sessions[room.jid] then
             sessions[room.jid][nick] = nil 
         end
-        local count = iterators.count(sessions[room.jid] or {})
+        local count = iterators.count(pairs(sessions[room.jid]))
 
         local bridge = roomjid2bridge[room.jid]
 

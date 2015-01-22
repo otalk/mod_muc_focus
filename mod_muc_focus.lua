@@ -359,16 +359,9 @@ module:hook("muc-occupant-joined", function (event)
             return
         end
 
-        local bridge = roomjid2bridge[room.jid]
-        if not bridge then -- pick a bridge 
-            roomjid2bridge[room.jid] = pick_bridge(room.jid)
-            bridge = roomjid2bridge[room.jid] 
-        end
-
         -- if there are now enough occupants, create a conference
         -- look at room._occupants size?
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
-        module:log("debug", "room jid %s bridge %s", room.jid, bridge)
 
         -- FIXME: this doesn't allow us to clean up on leave
         if pending[room.jid] == nil then pending[room.jid] = {}; end
@@ -377,6 +370,14 @@ module:hook("muc-occupant-joined", function (event)
         endpoints[room.jid][#endpoints[room.jid]+1] = nick
         module:log("debug", "pending %d count %d", #pending[room.jid], count)
         if count < focus_min_participants then return; end
+
+        local bridge = roomjid2bridge[room.jid]
+        if not bridge then -- pick a bridge 
+            roomjid2bridge[room.jid] = pick_bridge(room.jid)
+            bridge = roomjid2bridge[room.jid] 
+        end
+
+        module:log("debug", "room jid %s bridge %s", room.jid, bridge)
 
         jid2room[room.jid] = room
 
@@ -420,7 +421,7 @@ local function remove_session(event)
         if sessions[room.jid] then
             sessions[room.jid][nick] = nil 
         end
-        local count = iterators.count(pairs(sessions[room.jid]))
+        local count = iterators.count(pairs(sessions[room.jid] or {}))
 
         local bridge = roomjid2bridge[room.jid]
 

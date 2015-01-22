@@ -287,9 +287,6 @@ local function destroy_conference(room)
                 count = count + 1
             end
         end
-        if iterators.count(jid2channels[room.jid]) == 0 then
-            jid2channels[room.jid] = nil
-        end
         if count > 0 then
             module:send(confupdate);
         end
@@ -305,14 +302,19 @@ local function destroy_conference(room)
     cleanup_room(room)
 end
 
+-- determines whether a participant is capable
+local function is_capable(occupant)
+    local stanza = occupant:get_presence()
+	local caps = stanza:get_child("conf", xmlns_mmuc)
+    return caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")
+end
+
+-- counts number of capable occupants in a room
 local function count_capable_clients(room)
     local count = 0
-    local stanza, caps
     -- FIXME: probably optimize this
     for nick, occupant in room:each_occupant() do
-        stanza = occupant:get_presence()
-		caps = stanza:get_child("conf", xmlns_mmuc)
-        if caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true") then
+        if is_capable(occupant) then
             count = count + 1
         end
     end
@@ -347,8 +349,7 @@ module:hook("muc-occupant-joined", function (event)
                    tostring(room), tostring(nick), tostring(stanza))
 
         -- check client mmuc capabilities
-		local caps = stanza:get_child("conf", xmlns_mmuc)
-        if not (caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")) then
+        if not is_capable(occupant) then
             return
         end
 
@@ -385,15 +386,16 @@ module:hook("muc-occupant-joined", function (event)
         end
 
         local pending = {}
-        local endpoints = {}
         -- anyone not currently in a session but capable of
-        -- those should be in endpoints[room.jid]
-        for nick_, occupant_ in room:each_occupant() do
-            pending[#pending+1] = nick_
-            endpoints[#endpoints+1] = nick_
+        if not sessions[room.jid] then sessions[room.jid] = {}; end
+        for nick_, occupant_ in room:each_occupant() do 
+            if is_capable(occupant_) and not sessions[room.jid][nick_] then
+                pending[#pending+1] = nick_
+            end
         end
+        --module:log("debug", "pending %s", serialization.serialize(pending))
 
-        create_channels(confcreate, endpoints)
+        create_channels(confcreate, pending)
         callbacks[confcreate.attr.id] = pending
         module:log("debug", "send_colibri %s", tostring(confcreate))
         module:send(confcreate);

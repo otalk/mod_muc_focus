@@ -305,7 +305,7 @@ end
 -- determines whether a participant is capable
 local function is_capable(occupant)
     local stanza = occupant:get_presence()
-	local caps = stanza:get_child("conf", xmlns_mmuc)
+    local caps = stanza:get_child("conf", xmlns_mmuc)
     return caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")
 end
 

@@ -234,6 +234,7 @@ end
 -- remove a conference which is no longer needed
 local function linger_timeout(room)
     local count = iterators.count(pairs(sessions[room.jid]))
+    -- count_capable_clients(room)?
     module:log("debug", "linger timeout %d", count)
     if count < focus_min_participants then
         destroy_conference(room)
@@ -326,6 +327,20 @@ local function destroy_conference(room)
     end
 end
 
+local function count_capable_clients(room)
+    local count = 0
+    local stanza, caps
+    -- FIXME: probably optimize this
+    for nick, occupant in room:each_occupant() do
+        stanza = occupant:get_presence()
+		caps = stanza:get_child("conf", xmlns_mmuc)
+        if caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true") then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 -- before someone joins we tell everyone that we're going to switch to 
 -- relayed mode soon
 module:hook("muc-occupant-pre-join", function(event)
@@ -333,7 +348,7 @@ module:hook("muc-occupant-pre-join", function(event)
         if jid2room[room.jid] then return; end -- already in a conf
 
         -- check if we are going to start a conference soon
-        local count = iterators.count(room:each_occupant());
+        local count = count_capable_clients(room)
         if count == focus_min_participants - 1 then
             local mode = st.message({ from = room.jid, type = "groupchat" })
             mode:tag("status", { xmnls = xmlns_mmuc, mode = "relay" })
@@ -349,31 +364,19 @@ module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
         --local count = iterators.count(sessions[room.jid] or {})
-        local count = iterators.count(room:each_occupant());
+        local count = count_capable_clients(room)
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
 
-        local bridge = roomjid2bridge[room.jid]
-        if not bridge then -- pick a bridge 
-            roomjid2bridge[room.jid] = pick_bridge(room.jid)
-            bridge = roomjid2bridge[room.jid] 
+        -- check client mmuc capabilities
+		local caps = stanza:get_child("conf", xmlns_mmuc)
+        if not (caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")) then
+            return
         end
 
-        -- if there are now two occupants, create a conference
+        -- if there are now enough occupants, create a conference
         -- look at room._occupants size?
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
-        module:log("debug", "room jid %s bridge %s", room.jid, bridge)
-
-        -- check client caps
-        -- currently hardcoded
-		local caps = stanza:get_child("c", "http://jabber.org/protocol/caps")
-        if caps then
-            module:log("debug", "caps ver %s", caps.attr.ver)
-            -- currently jts2118m3Eaq5FILAt7qGmRc+8M= is firefox without colibri/multistream support
-            if caps.attr.ver == "jts2118m3Eaq5FILAt7qGmRc+8M=" then
-                return 
-            end
-        end
 
         -- FIXME: this doesn't allow us to clean up on leave
         if pending[room.jid] == nil then pending[room.jid] = {}; end
@@ -382,6 +385,14 @@ module:hook("muc-occupant-joined", function (event)
         endpoints[room.jid][#endpoints[room.jid]+1] = nick
         module:log("debug", "pending %d count %d", #pending[room.jid], count)
         if count < focus_min_participants then return; end
+
+        local bridge = roomjid2bridge[room.jid]
+        if not bridge then -- pick a bridge 
+            roomjid2bridge[room.jid] = pick_bridge(room.jid)
+            bridge = roomjid2bridge[room.jid] 
+        end
+
+        module:log("debug", "room jid %s bridge %s", room.jid, bridge)
 
         jid2room[room.jid] = room
 
@@ -425,7 +436,7 @@ local function remove_session(event)
         if sessions[room.jid] then
             sessions[room.jid][nick] = nil 
         end
-        local count = iterators.count(pairs(sessions[room.jid]))
+        local count = iterators.count(pairs(sessions[room.jid] or {}))
 
         local bridge = roomjid2bridge[room.jid]
 
@@ -494,6 +505,7 @@ local function remove_session(event)
 
         if count < focus_min_participants then -- not enough participants any longer
             -- tell everyone to go back to p2p mode
+            -- only on transition min_participants -> min_participants - 1?
             local mode = st.message({ from = room.jid, type = "groupchat" })
             mode:tag("status", { xmnls = xmlns_mmuc, mode = "p2p" })
             room:broadcast_message(mode);
@@ -525,9 +537,9 @@ module:hook("muc-occupant-pre-change", function (event)
     local msids = participant2msids[room.jid][nick]
 	if not msids then return; end
 
-    -- filter any mmuc tags
+    -- filter any mediastream mmuc tags
     stanza:maptags(function (tag)
-        if tag.attr.xmlns ~= xmlns_mmuc then
+        if not (tag.name == "mediastream" and tag.attr.xmlns == xmlns_mmuc) then
             return tag
         end
     end);

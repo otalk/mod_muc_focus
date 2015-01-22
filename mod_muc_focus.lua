@@ -234,6 +234,7 @@ end
 -- remove a conference which is no longer needed
 local function linger_timeout(room)
     local count = iterators.count(pairs(sessions[room.jid]))
+    -- count_capable_clients(room)?
     module:log("debug", "linger timeout %d", count)
     if count < focus_min_participants then
         destroy_conference(room)
@@ -326,6 +327,20 @@ local function destroy_conference(room)
     end
 end
 
+local function count_capable_clients(room)
+    local count = 0
+    local stanza, caps
+    -- FIXME: probably optimize this
+    for nick, occupant in room:each_occupant() do
+        stanza = occupant:get_presence()
+		caps = stanza:get_child("conf", xmlns_mmuc)
+        if caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true") then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 -- before someone joins we tell everyone that we're going to switch to 
 -- relayed mode soon
 module:hook("muc-occupant-pre-join", function(event)
@@ -333,7 +348,7 @@ module:hook("muc-occupant-pre-join", function(event)
         if jid2room[room.jid] then return; end -- already in a conf
 
         -- check if we are going to start a conference soon
-        local count = iterators.count(room:each_occupant());
+        local count = count_capable_clients(room)
         if count == focus_min_participants - 1 then
             local mode = st.message({ from = room.jid, type = "groupchat" })
             mode:tag("status", { xmnls = xmlns_mmuc, mode = "relay" })
@@ -349,13 +364,13 @@ module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
         --local count = iterators.count(sessions[room.jid] or {})
-        local count = iterators.count(room:each_occupant());
+        local count = count_capable_clients(room)
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
 
         -- check client mmuc capabilities
 		local caps = stanza:get_child("conf", xmlns_mmuc)
-        if not caps then
+        if not (caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")) then
             return
         end
 
@@ -490,6 +505,7 @@ local function remove_session(event)
 
         if count < focus_min_participants then -- not enough participants any longer
             -- tell everyone to go back to p2p mode
+            -- only on transition min_participants -> min_participants - 1?
             local mode = st.message({ from = room.jid, type = "groupchat" })
             mode:tag("status", { xmnls = xmlns_mmuc, mode = "p2p" })
             room:broadcast_message(mode);

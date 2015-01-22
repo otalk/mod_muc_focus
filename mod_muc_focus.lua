@@ -353,27 +353,22 @@ module:hook("muc-occupant-joined", function (event)
 		module:log("debug", "handle_join %s %s %s", 
                    tostring(room), tostring(nick), tostring(stanza))
 
+        -- check client mmuc capabilities
+		local caps = stanza:get_child("conf", xmlns_mmuc)
+        if not caps then
+            return
+        end
+
         local bridge = roomjid2bridge[room.jid]
         if not bridge then -- pick a bridge 
             roomjid2bridge[room.jid] = pick_bridge(room.jid)
             bridge = roomjid2bridge[room.jid] 
         end
 
-        -- if there are now two occupants, create a conference
+        -- if there are now enough occupants, create a conference
         -- look at room._occupants size?
         module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
         module:log("debug", "room jid %s bridge %s", room.jid, bridge)
-
-        -- check client caps
-        -- currently hardcoded
-		local caps = stanza:get_child("c", "http://jabber.org/protocol/caps")
-        if caps then
-            module:log("debug", "caps ver %s", caps.attr.ver)
-            -- currently jts2118m3Eaq5FILAt7qGmRc+8M= is firefox without colibri/multistream support
-            if caps.attr.ver == "jts2118m3Eaq5FILAt7qGmRc+8M=" then
-                return 
-            end
-        end
 
         -- FIXME: this doesn't allow us to clean up on leave
         if pending[room.jid] == nil then pending[room.jid] = {}; end

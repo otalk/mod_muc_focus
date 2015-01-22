@@ -387,6 +387,7 @@ module:hook("muc-occupant-joined", function (event)
 
         local pending = {}
         -- anyone not currently in a session but capable of
+        -- this includes people who sent session-terminate
         if not sessions[room.jid] then sessions[room.jid] = {}; end
         for nick_, occupant_ in room:each_occupant() do 
             if is_capable(occupant_) and not sessions[room.jid][nick_] then

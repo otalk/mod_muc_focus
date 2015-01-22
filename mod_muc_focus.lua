@@ -525,9 +525,9 @@ module:hook("muc-occupant-pre-change", function (event)
     local msids = participant2msids[room.jid][nick]
 	if not msids then return; end
 
-    -- filter any mmuc tags
+    -- filter any mediastream mmuc tags
     stanza:maptags(function (tag)
-        if tag.attr.xmlns ~= xmlns_mmuc then
+        if not (tag.name == "mediastream" and tag.attr.xmlns == xmlns_mmuc) then
             return tag
         end
     end);

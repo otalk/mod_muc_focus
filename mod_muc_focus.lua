@@ -165,6 +165,9 @@ local function update_channels(stanza, contents, channels, endpoint)
             for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
                 stanza:add_child(group)
             end
+            for ext in description:childtags("rtp-hdrext", xmlns_jingle_rtp_headerext) do
+                stanza:add_child(ext)
+            end
         end
         for transport in content:childtags("transport", xmlns_jingle_ice) do
             module:log("debug", "      transport ufrag %s pwd %s", transport.attr.ufrag, transport.attr.pwd)

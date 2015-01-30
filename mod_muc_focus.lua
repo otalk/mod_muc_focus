@@ -348,15 +348,22 @@ end
 -- relayed mode soon
 module:hook("muc-occupant-pre-join", function(event)
         local room, stanza = event.room, event.stanza;
-        if jid2room[room.jid] then return; end -- already in a conf
+        --if jid2room[room.jid] then return; end -- already in a conf
 
         -- check if we are going to start a conference soon
         local count = count_capable_clients(room)
-        if count == focus_min_participants - 1 then
-            local mode = st.message({ from = room.jid, type = "groupchat" })
-            mode:tag("status", { xmnls = xmlns_mmuc, mode = "relay" })
-            room:broadcast_message(mode);
+
+        local mode = st.message({ from = room.jid, type = "groupchat" })
+        if count >= focus_min_participants - 1 then
+            mode:tag("status", { xmlns = xmlns_mmuc, mode = "relay" })
+        else
+            mode:tag("status", { xmlns = xmlns_mmuc, mode = "p2p" })
         end
+        room:broadcast_message(mode);
+
+        -- also send to joining participant
+        mode.attr.to = stanza.attr.from
+        module:send(mode);
 end, 100)
 
 -- when someone joins the room, we request a channel for them on the bridge
@@ -510,7 +517,7 @@ local function remove_session(event)
             -- tell everyone to go back to p2p mode
             -- only on transition min_participants -> min_participants - 1?
             local mode = st.message({ from = room.jid, type = "groupchat" })
-            mode:tag("status", { xmnls = xmlns_mmuc, mode = "p2p" })
+            mode:tag("status", { xmlns = xmlns_mmuc, mode = "p2p" })
             room:broadcast_message(mode);
 
             if focus_linger_time > 0 then

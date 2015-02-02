@@ -96,12 +96,6 @@ local participant2sources = {}
 -- all the msids
 local participant2msids = {}
 
--- people waiting to join
-local pending = {}
-
--- endpoints associated with that
-local endpoints = {}
-
 -- bridge associated with a room
 local roomjid2bridge = {}
 
@@ -246,8 +240,6 @@ end
 
 -- clean up any local state we have for this room
 local function cleanup_room(room)
-    pending[room.jid] = nil
-    endpoints[room.jid] = nil
     jid2room[room.jid] = nil
 
     jid2channels[room.jid] = nil;
@@ -260,7 +252,6 @@ local function cleanup_room(room)
 end
 
 -- terminate the jingle sessions, 
--- set any participants in the room as pending
 -- and expire any channels for a conference,
 local function destroy_conference(room)
     -- terminate the jingle sessions
@@ -285,16 +276,6 @@ local function destroy_conference(room)
 
     local confid = roomjid2conference[room.jid]
 
-    -- set any participants as pending
-    -- FIXME: well, not participants which are not capable so the
-    -- whole pending logic is probably obsolete
-    pending[room.jid] = {}
-    endpoints[room.jid] = {}
-    for nick, occupant in room:each_occupant() do
-        pending[room.jid][#pending[room.jid]+1] = nick
-        endpoints[room.jid][#endpoints[room.jid]+1] = nick
-    end
-
     -- expire any channels
     local count = 0
     local bridge = roomjid2bridge[room.jid]
@@ -309,9 +290,6 @@ local function destroy_conference(room)
                 count = count + 1
             end
         end
-        if iterators.count(jid2channels[room.jid]) == 0 then
-            jid2channels[room.jid] = nil
-        end
         if count > 0 then
             module:send(confupdate);
         end
@@ -324,20 +302,22 @@ local function destroy_conference(room)
     participant2msids[room.jid] = nil
 
     -- final cleanup, just in case
-    count = #pending[room.jid]
-    if count == 0 then
-        cleanup_room(room)
-    end
+    cleanup_room(room)
 end
 
+-- determines whether a participant is capable
+local function is_capable(occupant)
+    local stanza = occupant:get_presence()
+    local caps = stanza:get_child("conf", xmlns_mmuc)
+    return caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")
+end
+
+-- counts number of capable occupants in a room
 local function count_capable_clients(room)
     local count = 0
-    local stanza, caps
     -- FIXME: probably optimize this
     for nick, occupant in room:each_occupant() do
-        stanza = occupant:get_presence()
-		caps = stanza:get_child("conf", xmlns_mmuc)
-        if caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true") then
+        if is_capable(occupant) then
             count = count + 1
         end
     end
@@ -379,21 +359,13 @@ module:hook("muc-occupant-joined", function (event)
                    tostring(room), tostring(nick), tostring(stanza))
 
         -- check client mmuc capabilities
-		local caps = stanza:get_child("conf", xmlns_mmuc)
-        if not (caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")) then
+        if not is_capable(occupant) then
             return
         end
 
         -- if there are now enough occupants, create a conference
         -- look at room._occupants size?
-        module:log("debug", "handle join #occupants %s %d", tostring(room._occupants), count)
-
-        -- FIXME: this doesn't allow us to clean up on leave
-        if pending[room.jid] == nil then pending[room.jid] = {}; end
-        if endpoints[room.jid] == nil then endpoints[room.jid] = {}; end
-        pending[room.jid][#pending[room.jid]+1] = nick
-        endpoints[room.jid][#endpoints[room.jid]+1] = nick
-        module:log("debug", "pending %d count %d", #pending[room.jid], count)
+        module:log("debug", "handle join #occupants %d out of %d", count, iterators.count(pairs(room._occupants)))
         if count < focus_min_participants then return; end
 
         local bridge = roomjid2bridge[room.jid]
@@ -423,15 +395,19 @@ module:hook("muc-occupant-joined", function (event)
             confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
         end
 
-        -- FIXME: careful about marking this as in progress and dealing with the following scenario:
-        -- join, join, create conf iq-get, part, join, create conf iq-result
-        -- this should not trigger a new conference to be created but can reuse the created on
-        -- just with different participants
+        local pending = {}
+        -- anyone not currently in a session but capable of
+        -- this includes people who sent session-terminate
+        if not sessions[room.jid] then sessions[room.jid] = {}; end
+        for nick_, occupant_ in room:each_occupant() do 
+            if is_capable(occupant_) and not sessions[room.jid][nick_] then
+                pending[#pending+1] = nick_
+            end
+        end
+        --module:log("debug", "pending %s", serialization.serialize(pending))
 
-        create_channels(confcreate, endpoints[room.jid])
-        callbacks[confcreate.attr.id] = pending[room.jid]
-        pending[room.jid] = nil
-        endpoints[room.jid] = nil
+        create_channels(confcreate, pending)
+        callbacks[confcreate.attr.id] = pending
         module:log("debug", "send_colibri %s", tostring(confcreate))
         module:send(confcreate);
 end, 2)
@@ -479,18 +455,6 @@ local function remove_session(event)
                             room:route_to_occupant(occupant, sourceremove)
                         end
                     end
-                end
-            end
-        end
-
-        -- look whether the participant leaving is on our pending list
-        -- and clean that up
-        if pending[room.jid] then
-            for i, value in ipairs(pending[room.jid]) do
-                if (value == jid) then
-                    pending[room.jid][i] = nil
-                    endpoints[room.jid][i] = nil
-                    break
                 end
             end
         end

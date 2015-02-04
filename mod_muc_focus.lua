@@ -251,9 +251,39 @@ local function cleanup_room(room)
     participant2msids[room.jid] = nil
 end
 
+-- determines whether a participant is capable
+local function is_capable(occupant)
+    local stanza = occupant:get_presence()
+    if not stanza then return false; end
+    local caps = stanza:get_child("conf", xmlns_mmuc)
+    return caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")
+end
+
+-- counts number of capable occupants in a room
+local function count_capable_clients(room)
+    local count = 0
+    -- FIXME: probably optimize this
+    for nick, occupant in room:each_occupant() do
+        if is_capable(occupant) then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 -- terminate the jingle sessions, 
 -- and expire any channels for a conference,
 local function destroy_conference(room)
+    -- check that the conditions why we called this still apply
+    local count = count_capable_clients(room)
+    if count >= focus_min_participants then return; end
+
+    -- tell everyone to go back to p2p mode
+    -- only on transition min_participants -> min_participants - 1?
+    local mode = st.message({ from = room.jid, type = "groupchat" })
+    mode:tag("status", { xmlns = xmlns_mmuc, mode = "p2p" })
+    room:broadcast_message(mode);
+
     -- terminate the jingle sessions
     local sid = roomjid2conference[room.jid] -- uses the id from the bridge
     if not sid then return; end
@@ -305,41 +335,22 @@ local function destroy_conference(room)
     cleanup_room(room)
 end
 
--- determines whether a participant is capable
-local function is_capable(occupant)
-    local stanza = occupant:get_presence()
-    local caps = stanza:get_child("conf", xmlns_mmuc)
-    return caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")
-end
-
--- counts number of capable occupants in a room
-local function count_capable_clients(room)
-    local count = 0
-    -- FIXME: probably optimize this
-    for nick, occupant in room:each_occupant() do
-        if is_capable(occupant) then
-            count = count + 1
-        end
-    end
-    return count
-end
-
 -- before someone joins we tell everyone that we're going to switch to 
 -- relayed mode soon
 module:hook("muc-occupant-pre-join", function(event)
         local room, stanza = event.room, event.stanza;
         --if jid2room[room.jid] then return; end -- already in a conf
-
         -- check if we are going to start a conference soon
         local count = count_capable_clients(room)
-
         local mode = st.message({ from = room.jid, type = "groupchat" })
-        if count >= focus_min_participants - 1 then
+        local caps = stanza:get_child("conf", xmlns_mmuc)
+        local new_capable = caps and (caps.attr.bridged == "1" or caps.attr.bridged == "true")
+        if new_capable and count >= focus_min_participants - 1 then
             mode:tag("status", { xmlns = xmlns_mmuc, mode = "relay" })
+            room:broadcast_message(mode);
         else
             mode:tag("status", { xmlns = xmlns_mmuc, mode = "p2p" })
         end
-        room:broadcast_message(mode);
 
         -- also send to joining participant
         mode.attr.to = stanza.attr.from
@@ -478,12 +489,7 @@ local function remove_session(event)
         end
 
         if count < focus_min_participants then -- not enough participants any longer
-            -- tell everyone to go back to p2p mode
-            -- only on transition min_participants -> min_participants - 1?
-            local mode = st.message({ from = room.jid, type = "groupchat" })
-            mode:tag("status", { xmlns = xmlns_mmuc, mode = "p2p" })
-            room:broadcast_message(mode);
-
+            -- ѕtart downgrade process
             if focus_linger_time > 0 then
                 module:add_timer(focus_linger_time, function () 
                     destroy_conference(room)

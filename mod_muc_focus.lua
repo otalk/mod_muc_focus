@@ -69,6 +69,7 @@ local xmlns_jingle = "urn:xmpp:jingle:1";
 local xmlns_jingle_ice = "urn:xmpp:jingle:transports:ice-udp:1";
 local xmlns_jingle_dtls = "urn:xmpp:jingle:apps:dtls:0";
 local xmlns_jingle_rtp = "urn:xmpp:jingle:apps:rtp:1";
+local xmlns_jingle_rtp_info = "urn:xmpp:jingle:apps:rtp:info:1";
 local xmlns_jingle_rtp_headerext = "urn:xmpp:jingle:apps:rtp:rtp-hdrext:0";
 local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
@@ -525,8 +526,8 @@ module:hook("muc-occupant-pre-change", function (event)
     end);
 
     -- stamp them onto it
-    for msid, foo in pairs(msids) do
-        stanza:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid }):up()
+    for msid, info in pairs(msids) do
+        stanza:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid, audio = info.audio, video = info.video }):up()
     end
 end, 2);
 
@@ -779,6 +780,115 @@ module:hook("iq/bare", function (event)
             return
         end
 
+        if participant2sources[room.jid] == nil then
+            participant2sources[room.jid] = {}
+        end
+        if participant2msids[room.jid] == nil then
+            participant2msids[room.jid] = {}
+        end
+
+        if action == "session-info" then
+            local msids = participant2msids[room.jid][sender.nick];
+
+            for muted in jingle:childtags("mute", xmlns_jingle_rtp_info) do
+                local mediastream_specified = false;
+                for mediastream in jingle:childtags("mediastream", xmlns_mmuc) do
+                    mediastream_specified = true;
+
+                    local msid = mediastream.attr.msid;
+
+                    if msids[msid] then
+                        if muted.attr.name then
+                            if msids[msid][muted.attr.name] then
+                                msids[msid][muted.attr.name] = "muted";
+                            end
+                        else
+                            if msids[msid].audio then
+                                msids[msid].audio = "muted";
+                            end
+                            if msids[msid].video then
+                                msids[msid].video = "muted";
+                            end
+                        end
+                    end
+                end
+                if not mediastream_specified then
+                    for msid, info in pairs(msids) do
+                        if muted.attr.name then
+                            if msids[msid][muted.attr.name] then
+                                msids[msid][muted.attr.name] = "muted";
+                            end
+                        else
+                            if msids[msid].audio then
+                                msids[msid].audio = "muted";
+                            end
+                            if msids[msid].video then
+                                msids[msid].video = "muted";
+                            end
+                        end
+                    end
+                end
+            end
+
+            for unmuted in jingle:childtags("unmute", xmlns_jingle_rtp_info) do
+                local mediastream_specified = false;
+                for mediastream in jingle:childtags("mediastream", xmlns_mmuc) do
+                    mediastream_specified = true;
+
+                    local msid = mediastream.attr.msid;
+
+                    if msids[msid] then
+                        if unmuted.attr.name then
+                            if msids[msid][unmuted.attr.name] then
+                                msids[msid][unmuted.attr.name] = "true";
+                            end
+                        else
+                            if msids[msid].audio then
+                                msids[msid].audio = "true";
+                            end
+                            if msids[msid].video then
+                                msids[msid].video = "true";
+                            end
+                        end
+                    end
+                end
+                if not mediastream_specified then
+                    for msid, info in pairs(msids) do
+                        if unmuted.attr.name then
+                            if msids[msid][unmuted.attr.name] then
+                                msids[msid][unmuted.attr.name] = "true";
+                            end
+                        else
+                            if msids[msid].audio then
+                                msids[msid].audio = "true";
+                            end
+                            if msids[msid].video then
+                                msids[msid].video = "true";
+                            end
+                        end
+                    end
+                end
+            end
+
+            session.send(st.reply(stanza))
+
+            local pr = sender:get_presence()
+            -- filter any existing mediastream mmuc tags
+            pr:maptags(function (tag)
+                if not (tag.name == "mediastream" and tag.attr.xmlns == xmlns_mmuc) then
+                    return tag
+                end
+            end);
+            for msid, info in pairs(msids) do
+                pr:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid, audio = info.audio, video = info.video }):up()
+            end
+            sender:set_session(stanza.attr.from, pr)
+			local x = st.stanza("x", {xmlns = "http://jabber.org/protocol/muc#user";});
+            room:publicise_occupant_status(sender, x);
+
+            return true;
+        end
+
         -- FIXME: there could be multiple msids per participant and content
         -- but we try to avoid that currently
         local msids = {} 
@@ -791,7 +901,10 @@ module:hook("iq/bare", function (event)
                         if parameter.attr.name == "msid" then
                             local msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
                             -- second part is the track
-                            msids[msid] = true
+                            if not msids[msid] then
+                                msids[msid] = {}
+                            end
+                            msids[msid][description.attr.media] = "true"
                             module:log("debug", "msid %s content %s", msid, content.attr.name)
                         end
                     end
@@ -812,20 +925,12 @@ module:hook("iq/bare", function (event)
 
         module:log("debug", "confid %s", tostring(confid))
 
-
-        if participant2sources[room.jid] == nil then
-            participant2sources[room.jid] = {}
-        end
-        if participant2msids[room.jid] == nil then
-            participant2msids[room.jid] = {}
-        end
-
         if action == "session-accept" or action == "source-add" or action == "source-remove" then
             -- update participant presence with a <media xmlns=...><source type=audio ssrc=... direction=sendrecv/>...</media>
             -- or the new plan to tell the MSID
             local pr = sender:get_presence()
-            for msid, foo in pairs(msids) do
-                pr:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid }):up()
+            for msid, info in pairs(msids) do
+                pr:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid, audio = info.audio, video = info.video }):up()
             end
             --pr:tag("media", {xmlns = "http://.../ns/mjs"})
             --for name, source in pairs(sources) do

@@ -839,14 +839,14 @@ module:hook("iq/bare", function (event)
                     if msids[msid] then
                         if unmuted.attr.name then
                             if msids[msid][unmuted.attr.name] then
-                                msids[msid][unmuted.attr.name] = true;
+                                msids[msid][unmuted.attr.name] = "true";
                             end
                         else
                             if msids[msid].audio then
-                                msids[msid].audio = true;
+                                msids[msid].audio = "true";
                             end
                             if msids[msid].video then
-                                msids[msid].video = true;
+                                msids[msid].video = "true";
                             end
                         end
                     end
@@ -855,14 +855,14 @@ module:hook("iq/bare", function (event)
                     for msid, info in pairs(msids) do
                         if unmuted.attr.name then
                             if msids[msid][unmuted.attr.name] then
-                                msids[msid][unmuted.attr.name] = true;
+                                msids[msid][unmuted.attr.name] = "true";
                             end
                         else
                             if msids[msid].audio then
-                                msids[msid].audio = true;
+                                msids[msid].audio = "true";
                             end
                             if msids[msid].video then
-                                msids[msid].video = true;
+                                msids[msid].video = "true";
                             end
                         end
                     end
@@ -894,8 +894,10 @@ module:hook("iq/bare", function (event)
                         if parameter.attr.name == "msid" then
                             local msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
                             -- second part is the track
-                            msids[msid] = msids[msid] or {}
-                            msids[msid][content.attr.media] = true
+                            if not msids[msid] then
+                                msids[msid] = {}
+                            end
+                            msids[msid][description.attr.media] = "true"
                             module:log("debug", "msid %s content %s", msid, content.attr.name)
                         end
                     end

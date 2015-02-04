@@ -69,6 +69,7 @@ local xmlns_jingle = "urn:xmpp:jingle:1";
 local xmlns_jingle_ice = "urn:xmpp:jingle:transports:ice-udp:1";
 local xmlns_jingle_dtls = "urn:xmpp:jingle:apps:dtls:0";
 local xmlns_jingle_rtp = "urn:xmpp:jingle:apps:rtp:1";
+local xmlns_jingle_rtp_info = "urn:xmpp:jingle:apps:rtp:info:1";
 local xmlns_jingle_rtp_headerext = "urn:xmpp:jingle:apps:rtp:rtp-hdrext:0";
 local xmlns_jingle_rtp_feedback = "urn:xmpp:jingle:apps:rtp:rtcp-fb:0";
 local xmlns_jingle_rtp_ssma = "urn:xmpp:jingle:apps:rtp:ssma:0";
@@ -872,6 +873,12 @@ module:hook("iq/bare", function (event)
             session.send(st.reply(stanza))
 
             local pr = sender:get_presence()
+            -- filter any existing mediastream mmuc tags
+            pr:maptags(function (tag)
+                if not (tag.name == "mediastream" and tag.attr.xmlns == xmlns_mmuc) then
+                    return tag
+                end
+            end);
             for msid, info in pairs(msids) do
                 pr:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid, audio = info.audio, video = info.video }):up()
             end

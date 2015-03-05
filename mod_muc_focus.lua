@@ -358,6 +358,20 @@ module:hook("muc-occupant-pre-join", function(event)
         module:send(mode);
 end, 100)
 
+-- prevent multiple sessions from the same user because that is going
+-- to be very complicated
+module:hook("muc-occupant-pre-join", function(event)
+    module:log("debug", "pre-join %s is first %s is last %s", tostring(event.room), tostring(event.is_first_session), tostring(event.is_last_session))
+    local room, stanza = event.room, event.stanza;
+    if not event.is_first_session then
+        local from, to = stanza.attr.from, stanza.attr.to;
+        module:log("debug", "%s couldn't join due to duplicate session: %s", from, to);
+        local reply = st.error_reply(stanza, "modify", "resource-constraint"):up();
+        event.origin.send(reply:tag("x", {xmlns = "http://jabber.org/protocol/muc"}));
+        return true;
+    end
+end, 101)
+
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
 -- possibly we need to hook muc-occupant-session-new instead 

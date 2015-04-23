@@ -109,6 +109,9 @@ local callbacks = {}
 -- bridges that have sent statistics recently
 local bridge_stats = {}
 
+-- for people joining while a conference is created
+local pending_create = {}
+
 -- channel functions: create, update, expire 
 -- create channels for multiple endpoints
 local function create_channels(stanza, endpoints)
@@ -250,6 +253,7 @@ local function cleanup_room(room)
     roomjid2conference[room.jid] = nil
     participant2sources[room.jid] = nil
     participant2msids[room.jid] = nil
+    pending_create[room.jid] = nil
 end
 
 -- determines whether a participant is capable
@@ -404,6 +408,15 @@ module:hook("muc-occupant-joined", function (event)
 
         jid2room[room.jid] = room
 
+        if roomjid2conference[room.jid] == -1 then
+            -- keep them in a list until we get a conference id to create additional channels
+            if not pending_create[room.jid] then
+                pending_create[room.jid] = {}
+            end
+            pending_create[room.jid][#pending_create+1] = nick
+            return
+        end
+
         local confcreate = st.iq({ from = room.jid, to = bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
         if roomjid2conference[room.jid] == nil then -- create a conference
@@ -411,11 +424,6 @@ module:hook("muc-occupant-joined", function (event)
             confcreate:tag("conference", { xmlns = xmlns_colibri })
             roomjid2conference[room.jid] = -1 -- pending
             --confcreate:tag("recording", { state = "true", token = "recordersecret" }):up() -- recording
-        elseif roomjid2conference[room.jid] == -1 then
-            -- FIXME push to a queue that is sent once we get the callback 
-            -- for the create request
-            module:log("debug", "FIXME new participant while conference creation is pending")
-            return
         else -- update existing conference
             module:log("debug", "existing conf id %s", roomjid2conference[room.jid])
             confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
@@ -755,6 +763,19 @@ module:hook("iq/bare", function (event)
 --        end
 
         -- if receive conference with known ID but unknown channel ID...
+
+        -- if there are pending participants that joined while the conference was created
+        -- create channels for them here
+        if pending_create[room.jid] then
+            local update = st.iq({ from = room.jid, to = stanza.attr.from, type = "set" })
+            confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
+            create_channels(confcreate, pending_create[room.jid])
+            callbacks[confcreate.attr.id] = pending_create
+            module:log("debug", "send_colibri %s late", tostring(confcreate))
+            module:send(confcreate);
+            pending_create[room.jid] = nil
+        end
+
         return true
 end, 2);
 
@@ -777,11 +798,17 @@ module:hook("iq/bare", function (event)
         -- or look up the participant based on the real jid
         module:log("debug", "handle_jingle %s from %s", jingle.attr.action, stanza.attr.from)
         local roomjid = stanza.attr.to
+        local action = jingle.attr.action
         -- FIXME: ignore jingle not addressed to this host
         -- and stanzas not addressed to the rooms bare jid
         local room = jid2room[roomjid]
+        if not room then
+            if action == "session-terminate" then
+                module:log("debug", "session-terminate while room is dead already, ignoring")
+                return
+            end
+        end
         local confid = roomjid2conference[room.jid]
-        local action = jingle.attr.action
         local sender = room:get_occupant_by_real_jid(stanza.attr.from)
         local bridge = roomjid2bridge[room.jid]
 
@@ -994,13 +1021,15 @@ module:hook("iq/bare", function (event)
         end
 
         -- update the channels
-        local channels = jid2channels[room.jid][sender.nick]
-        local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
-            :tag("conference", { xmlns = xmlns_colibri, id = confid })
-        update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
+        if jid2channels[room.jid] and jid2channels[room.jid][sender.nick] then
+            local channels = jid2channels[room.jid][sender.nick]
+            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                :tag("conference", { xmlns = xmlns_colibri, id = confid })
+            update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
 
-        module:log("debug", "confupdate is %s", tostring(confupdate))
-        module:send(confupdate);
+            module:log("debug", "confupdate is %s", tostring(confupdate))
+            module:send(confupdate);
+        end
 
         session.send(st.reply(stanza))
         return true;

@@ -798,11 +798,17 @@ module:hook("iq/bare", function (event)
         -- or look up the participant based on the real jid
         module:log("debug", "handle_jingle %s from %s", jingle.attr.action, stanza.attr.from)
         local roomjid = stanza.attr.to
+        local action = jingle.attr.action
         -- FIXME: ignore jingle not addressed to this host
         -- and stanzas not addressed to the rooms bare jid
         local room = jid2room[roomjid]
+        if not room then
+            if action == "session-terminate" then
+                module:log("debug", "session-terminate while room is dead already, ignoring")
+                return
+            end
+        end
         local confid = roomjid2conference[room.jid]
-        local action = jingle.attr.action
         local sender = room:get_occupant_by_real_jid(stanza.attr.from)
         local bridge = roomjid2bridge[room.jid]
 
@@ -1015,13 +1021,15 @@ module:hook("iq/bare", function (event)
         end
 
         -- update the channels
-        local channels = jid2channels[room.jid][sender.nick]
-        local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
-            :tag("conference", { xmlns = xmlns_colibri, id = confid })
-        update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
+        if jid2channels[room.jid] and jid2channels[room.jid][sender.nick] then
+            local channels = jid2channels[room.jid][sender.nick]
+            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                :tag("conference", { xmlns = xmlns_colibri, id = confid })
+            update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
 
-        module:log("debug", "confupdate is %s", tostring(confupdate))
-        module:send(confupdate);
+            module:log("debug", "confupdate is %s", tostring(confupdate))
+            module:send(confupdate);
+        end
 
         session.send(st.reply(stanza))
         return true;

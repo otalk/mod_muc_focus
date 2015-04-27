@@ -556,11 +556,12 @@ end, 2);
 
 -- the static parts of the audio description we send
 local function add_audio_description(stanza)
-    stanza:tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
-            :tag("parameter", { name = "minptime", value = "10" }):up()
-        :up()
+    stanza
         :tag("payload-type", { id = "103", name = "ISAC", clockrate = "16000" }):up()
         :tag("payload-type", { id = "104", name = "ISAC", clockrate = "32000" }):up()
+        :tag("payload-type", { id = "111", name = "opus", clockrate = "48000", channels = "2" })
+            :tag("parameter", { name = "minptime", value = "10" }):up()
+        :up()
         :tag("payload-type", { id = "9", name = "G722", clockrate = "8000" }):up()
         :tag("payload-type", { id = "0", name = "PCMU", clockrate = "8000" }):up()
         :tag("payload-type", { id = "8", name = "PCMA", clockrate = "8000" }):up()

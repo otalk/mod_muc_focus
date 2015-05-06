@@ -629,7 +629,6 @@ module:hook("iq/full", function (event)
         module:log("debug", "conf id %s", confid)
 
         local roomjid = decode_roomjid(stanza.attr.to)
-        module:log("debug", "decoded %s", roomjid)
 
         -- assert the sender is the bridge associated with this room
         if stanza.attr.from ~= roomjid2bridge[roomjid] then

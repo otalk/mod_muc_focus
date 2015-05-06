@@ -35,6 +35,8 @@ local jid  = require "util.jid";
 local config = require "core.configmanager";
 local os_time = os.time;
 local setmetatable = setmetatable;
+local base64 = require "util.encodings".base64;
+local jid_split = require "util.jid".split;
 --local host = module.get_host();
 
 -- get data from the configuration file
@@ -111,6 +113,17 @@ local bridge_stats = {}
 
 -- for people joining while a conference is created
 local pending_create = {}
+
+-- base64 room jids to avoid unicode choking
+local function encode_roomjid(jid)
+    local node, host = jid_split(jid)
+    return "focus" .. "@" .. host .. "/" .. base64.encode(node)
+end
+
+local function decode_roomjid(jid)
+    local node, host, res = jid_split(jid)
+    return base64.decode(res) .. "@" .. host
+end
 
 -- channel functions: create, update, expire 
 -- create channels for multiple endpoints
@@ -314,7 +327,7 @@ local function destroy_conference(room)
     -- expire any channels
     local count = 0
     local bridge = roomjid2bridge[room.jid]
-    local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+    local confupdate = st.iq({ from = encode_roomjid(room.jid), to = bridge, type = "set" })
         :tag("conference", { xmlns = xmlns_colibri, id = confid })
     if jid2channels[room.jid] then
         for nick, occupant in room:each_occupant() do
@@ -417,7 +430,7 @@ module:hook("muc-occupant-joined", function (event)
             return
         end
 
-        local confcreate = st.iq({ from = room.jid, to = bridge, type = "set" })
+        local confcreate = st.iq({ from = encode_roomjid(room.jid), to = bridge, type = "set" })
         -- for now, just create a conference for each participant and then ... initiate a jingle session with them
         if roomjid2conference[room.jid] == nil then -- create a conference
             module:log("debug", "creating conference for %s", room.jid)
@@ -498,7 +511,7 @@ local function remove_session(event)
         if jid2channels[room.jid] then
             local channels = jid2channels[room.jid][nick] 
             if channels then
-                local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+                local confupdate = st.iq({ from = encode_roomjid(room.jid), to = bridge, type = "set" })
                     :tag("conference", { xmlns = xmlns_colibri, id = confid })
                 expire_channels(confupdate, channels, nick)
                 jid2channels[room.jid][nick] = nil
@@ -597,7 +610,7 @@ local function add_video_description(stanza)
 end
 
 -- things we do when a room receives a COLIBRI stanza from the bridge 
-module:hook("iq/bare", function (event)
+module:hook("iq/full", function (event)
         local stanza = event.stanza
 
         if stanza.attr.type == "error" then
@@ -615,7 +628,8 @@ module:hook("iq/bare", function (event)
         local confid = conf.attr.id
         module:log("debug", "conf id %s", confid)
 
-        local roomjid = stanza.attr.to
+        local roomjid = decode_roomjid(stanza.attr.to)
+        module:log("debug", "decoded %s", roomjid)
 
         -- assert the sender is the bridge associated with this room
         if stanza.attr.from ~= roomjid2bridge[roomjid] then
@@ -1023,7 +1037,7 @@ module:hook("iq/bare", function (event)
         -- update the channels
         if jid2channels[room.jid] and jid2channels[room.jid][sender.nick] then
             local channels = jid2channels[room.jid][sender.nick]
-            local confupdate = st.iq({ from = room.jid, to = bridge, type = "set" })
+            local confupdate = st.iq({ from = encode_roomjid(room.jid), to = bridge, type = "set" })
                 :tag("conference", { xmlns = xmlns_colibri, id = confid })
             update_channels(confupdate, jingle:childtags("content", xmlns_jingle), channels, sender.nick)
 

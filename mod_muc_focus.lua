@@ -613,10 +613,10 @@ end
 module:hook("iq/full", function (event)
         local stanza = event.stanza
 
-        if stanza.attr.type == "error" then
-            module:log("debug", "handle_colibri error %s", tostring(stanza))
-            return true
-        end
+--        if stanza.attr.type == "error" then
+--            module:log("debug", "handle_colibri error %s", tostring(stanza))
+--            return true
+--        end
 
         local conf = stanza:get_child("conference", xmlns_colibri)
         if conf == nil then return; end

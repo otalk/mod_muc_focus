@@ -117,7 +117,7 @@ local pending_create = {}
 -- base64 room jids to avoid unicode choking
 local function encode_roomjid(jid)
     local node, host = jid_split(jid)
-    return "focus" .. "@" .. host .. "/" .. base64.encode(node)
+    return host .. "/" .. base64.encode(node)
 end
 
 local function decode_roomjid(jid)
@@ -610,13 +610,13 @@ local function add_video_description(stanza)
 end
 
 -- things we do when a room receives a COLIBRI stanza from the bridge 
-module:hook("iq/full", function (event)
+module:hook("iq/host", function (event)
         local stanza = event.stanza
 
---        if stanza.attr.type == "error" then
---            module:log("debug", "handle_colibri error %s", tostring(stanza))
---            return true
---        end
+        if stanza.attr.type == "error" then
+            module:log("debug", "handle_colibri error %s", tostring(stanza))
+            return true
+        end
 
         local conf = stanza:get_child("conference", xmlns_colibri)
         if conf == nil then return; end

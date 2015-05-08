@@ -781,11 +781,11 @@ module:hook("iq/host", function (event)
         -- create channels for them here
         if pending_create[room.jid] then
             local update = st.iq({ from = room.jid, to = stanza.attr.from, type = "set" })
-            confcreate:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
-            create_channels(confcreate, pending_create[room.jid])
-            callbacks[confcreate.attr.id] = pending_create
-            module:log("debug", "send_colibri %s late", tostring(confcreate))
-            module:send(confcreate);
+            update:tag("conference", { xmlns = xmlns_colibri, id = roomjid2conference[room.jid] })
+            create_channels(update, pending_create[room.jid])
+            callbacks[update.attr.id] = pending_create
+            module:log("debug", "send_colibri %s late", tostring(update))
+            module:send(update);
             pending_create[room.jid] = nil
         end
 

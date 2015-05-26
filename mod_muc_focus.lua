@@ -476,6 +476,7 @@ local function remove_session(event)
         if participant2sources[room.jid] and participant2sources[room.jid][nick] then
             local sources = participant2sources[room.jid][nick]
             if sources then
+                local removed = 0
                 -- we need to send source-remove for these
                 module:log("debug", "source-remove")
                 local sid = roomjid2conference[room.jid] -- uses the id from the bridge
@@ -486,6 +487,7 @@ local function remove_session(event)
                         :tag("description", { xmlns = xmlns_jingle_rtp, media = name })
                         for i, source in ipairs(sourcelist) do
                             sourceremove:add_child(source)
+                            removed = removed + 1
                         end
                         sourceremove:up() -- description
                     :up() -- content
@@ -494,7 +496,7 @@ local function remove_session(event)
                 participant2sources[room.jid][nick] = nil
                 participant2msids[room.jid][nick] = nil
 
-                if count > 1 then -- will terminate session otherwise
+                if count > 1 and removed > 0 then -- will terminate session otherwise
                     for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                         if occupant_jid ~= jid then -- cant happen i think
                             module:log("debug", "send source-remove to %s", tostring(occupant_jid))

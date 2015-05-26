@@ -851,7 +851,7 @@ module:hook("iq/bare", function (event)
 
                     local msid = mediastream.attr.msid;
 
-                    if msids[msid] then
+                    if msids and msids[msid] then
                         if muted.attr.name then
                             if msids[msid][muted.attr.name] then
                                 msids[msid][muted.attr.name] = "muted";
@@ -891,7 +891,7 @@ module:hook("iq/bare", function (event)
 
                     local msid = mediastream.attr.msid;
 
-                    if msids[msid] then
+                    if msids and msids[msid] then
                         if unmuted.attr.name then
                             if msids[msid][unmuted.attr.name] then
                                 msids[msid][unmuted.attr.name] = "true";

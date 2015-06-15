@@ -257,6 +257,7 @@ end
 
 -- clean up any local state we have for this room
 local function cleanup_room(room)
+    module:log("debug", "cleaning up %s", room.jid);
     jid2room[room.jid] = nil
 
     jid2channels[room.jid] = nil;

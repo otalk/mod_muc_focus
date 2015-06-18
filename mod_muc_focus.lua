@@ -374,7 +374,7 @@ module:hook("muc-occupant-pre-join", function(event)
         -- also send to joining participant
         mode.attr.to = stanza.attr.from
         module:send(mode);
-end, 100)
+end, -100)
 
 -- prevent multiple sessions from the same user because that is going
 -- to be very complicated

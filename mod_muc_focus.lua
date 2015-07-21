@@ -35,7 +35,6 @@ local jid  = require "util.jid";
 local config = require "core.configmanager";
 local os_time = os.time;
 local setmetatable = setmetatable;
-local base64 = require "util.encodings".base64;
 local jid_split = require "util.jid".split;
 --local host = module.get_host();
 
@@ -114,16 +113,40 @@ local bridge_stats = {}
 -- for people joining while a conference is created
 local pending_create = {}
 
+local HEX = {"0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"};
+
+
+function byte_to_hex(byte)
+    local first = math.floor(byte / 16);
+    local second = byte - (first * 16);
+    return HEX[first + 1] .. HEX[second +1];
+end
+
+function hex_decode(hex)
+    return string.gsub(hex, "([0-9A-Fa-f][0-9A-Fa-f])", function (hex)
+        return string.char(tonumber(hex, 16));
+    end);
+end
+
+function hex_encode(bytes)
+    return string.gsub(bytes, "(.)", function (byte)
+        return byte_to_hex(byte:byte(1));
+    end);
+end
+
+
 -- base64 room jids to avoid unicode choking
 local function encode_roomjid(jid)
-    local node, host = jid_split(jid)
-    return host .. "/" .. base64.encode(node)
+    local node, host = jid_split(jid);
+    return host .. "/" .. hex_encode(node);
 end
 
 local function decode_roomjid(jid)
-    local node, host, res = jid_split(jid)
-    return base64.decode(res) .. "@" .. host
+    local node, host, res = jid_split(jid);
+    local room_name = hex_decode(res);
+    return room_name.. "@" .. host;
 end
+
 
 -- channel functions: create, update, expire 
 -- create channels for multiple endpoints

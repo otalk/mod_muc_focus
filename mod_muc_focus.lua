@@ -222,7 +222,7 @@ local function pick_bridge(roomjid)
     local minval = nil
 
     -- only consider live bridges from which we have seen data recently
-    local live_bridges
+    local live_bridges = {}
     for bridge, stats in pairs(bridge_stats) do
         local age = difftime(os_time(), stats["timestamp"])
         if age < focus_liveliness then

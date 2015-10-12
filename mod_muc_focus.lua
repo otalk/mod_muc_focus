@@ -34,6 +34,7 @@ local st = require "util.stanza";
 local jid  = require "util.jid";
 local config = require "core.configmanager";
 local os_time = os.time;
+local difftime = os.difftime;
 local setmetatable = setmetatable;
 local jid_split = require "util.jid".split;
 --local host = module.get_host();
@@ -60,6 +61,8 @@ local focus_min_participants = module:get_option_number("focus_min_participants"
 -- below the minimum number. Off by default until this is fully tested
 local focus_linger_time = module:get_option_number("focus_linger_time", 0);
 
+-- time interval within which bridges are considered active
+local focus_liveliness = module:get_option_number("focus_bridge_liveliness", 60);
 
 local iterators = require "util.iterators"
 local serialization = require "util.serialization"
@@ -240,12 +243,20 @@ end
 local function pick_bridge(roomjid)
     local choice = nil
     local minval = nil
-    -- FIXME: clean up stale entries in bridge_stats here (or when adding a new one?)
+
+    -- only consider live bridges from which we have seen data recently
+    local live_bridges = {}
+    for bridge, stats in pairs(bridge_stats) do
+        local age = difftime(os_time(), stats["timestamp"])
+        if age < focus_liveliness then
+            live_bridges[bridge] = stats
+        end
+    end
 
     -- look at bridge stats, search for the bridge with the minimum
     -- up/download, participants, cpu
     -- FIXME: currently min bitrate
-    for bridge, stats in pairs(bridge_stats) do
+    for bridge, stats in pairs(live_bridges) do
         if not choice then
             choice = bridge
             minval = stats

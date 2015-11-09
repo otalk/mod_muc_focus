@@ -980,9 +980,9 @@ module:hook("iq/bare", function (event)
             return true;
         end
 
-        -- FIXME: there could be multiple msids per participant and content
-        -- but we try to avoid that currently
-        local msids = {}
+        -- there could be multiple msids per participant and content
+        -- we tried to avoid that but then did it which caused quite a number of weird bugs.
+        local msids = participant2msids[room.jid][sender.nick] or {}
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 local sourcelist = {}
@@ -992,11 +992,18 @@ module:hook("iq/bare", function (event)
                         if parameter.attr.name == "msid" then
                             local msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
                             -- second part is the track
-                            if not msids[msid] then
-                                msids[msid] = {}
+                            module:log("debug", "msid %s content %s action %s", msid, content.attr.name, action)
+                            if action == "session-accept" or action == "source-add" then
+                                if msids[msid] == nil then
+                                    msids[msid] = {}
+                                end
+                                msids[msid][description.attr.media] = "true"
+                            elseif action == "source-remove" and msids[msid] then
+                                msids[msid][description.attr.media] = nil
+                                if #msids[msid] == 0 then
+                                    msids[msid] = nil 
+                                end
                             end
-                            msids[msid][description.attr.media] = "true"
-                            module:log("debug", "msid %s content %s", msid, content.attr.name)
                         end
                     end
 
@@ -1013,13 +1020,17 @@ module:hook("iq/bare", function (event)
                 sources[content.attr.name] = sourcelist
             end
         end
-
         module:log("debug", "confid %s", tostring(confid))
 
         if action == "session-accept" or action == "source-add" or action == "source-remove" then
             -- update participant presence with a <media xmlns=...><source type=audio ssrc=... direction=sendrecv/>...</media>
             -- or the new plan to tell the MSID
             local pr = sender:get_presence()
+            pr:maptags(function (tag)
+                if not (tag.name == "mediastream" and tag.attr.xmlns == xmlns_mmuc) then
+                    return tag
+                end
+            end);
             for msid, info in pairs(msids) do
                 pr:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid, audio = info.audio, video = info.video }):up()
             end

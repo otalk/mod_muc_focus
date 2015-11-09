@@ -980,9 +980,9 @@ module:hook("iq/bare", function (event)
             return true;
         end
 
-        -- FIXME: there could be multiple msids per participant and content
-        -- but we try to avoid that currently
-        local msids = {}
+        -- there could be multiple msids per participant and content
+        -- we tried to avoid that but then did it which caused quite a number of weird bugs.
+        local msids = participant2msids[room.jid][sender.nick] or {}
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 local sourcelist = {}

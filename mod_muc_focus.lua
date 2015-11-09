@@ -199,6 +199,10 @@ local function update_channels(stanza, contents, channels, endpoint)
                 stanza:add_child(payload)
             end
             hasrtcpmux = description:get_child("rtcp-mux")
+            for source in description:childtags("source", xmlns_jingle_rtp_ssma) do
+                module:log("debug", "        ssrc %s", source.attr.ssrc)
+                stanza:tag("source", { xmlns = xmlns_jingle_rtp_ssma, ssrc = source.attr.ssrc }):up()
+            end
             for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
                 stanza:add_child(group)
             end

@@ -5,11 +5,11 @@
 
 OVERVIEW
 
-This module enables Prosody to act as a "focus agent" for a 
-multimedia conference. 
+This module enables Prosody to act as a "focus agent" for a
+multimedia conference.
 
-Basically, when this module is enabled, a Multi-User Chat room 
-(XEP-0045) speaks Jingle (XEP-0166, XEP-0167, XEP-0176, etc.) to 
+Basically, when this module is enabled, a Multi-User Chat room
+(XEP-0045) speaks Jingle (XEP-0166, XEP-0167, XEP-0176, etc.) to
 XMPP clients and speaks COLIBRI (XEP-0340) to media bridges (e.g.
 media mixers and selective forwarding units like the Jitsi
 Videobridge).
@@ -151,7 +151,7 @@ local function decode_roomjid(jid)
 end
 
 
--- channel functions: create, update, expire 
+-- channel functions: create, update, expire
 -- create channels for multiple endpoints
 local function create_channels(stanza, endpoints)
     stanza:tag("content", { name = "audio" })
@@ -159,7 +159,7 @@ local function create_channels(stanza, endpoints)
         stanza:tag("channel", { initiator = "true", endpoint = endpoints[i], ["channel-bundle-id"] = (usebundle and endpoints[i] or nil) }):up()
     end
     stanza:up()
-    
+
     stanza:tag("content", { name = "video" })
     for i = 1,#endpoints do
         stanza:tag("channel", { initiator = "true", endpoint = endpoints[i], ["channel-bundle-id"] = (usebundle and endpoints[i] or nil) }):up()
@@ -170,7 +170,7 @@ local function create_channels(stanza, endpoints)
         -- note: datachannels will soon not be inside content anymore
         stanza:tag("content", { name = "data" })
         for i = 1,#endpoints do
-            stanza:tag("sctpconnection", { initiator = "true", 
+            stanza:tag("sctpconnection", { initiator = "true",
                  endpoint = endpoints[i], -- FIXME: I want the msid which i dont know here yet
                  port = 5000, -- it should not be port, this is the sctpmap
                  ["channel-bundle-id"] = (usebundle and endpoints[i] or nil)
@@ -324,7 +324,7 @@ local function count_capable_clients(room)
     return count
 end
 
--- terminate the jingle sessions, 
+-- terminate the jingle sessions,
 -- and expire any channels for a conference,
 local function destroy_conference(room)
     -- check that the conditions why we called this still apply
@@ -388,7 +388,7 @@ local function destroy_conference(room)
     cleanup_room(room)
 end
 
--- before someone joins we tell everyone that we're going to switch to 
+-- before someone joins we tell everyone that we're going to switch to
 -- relayed mode soon
 module:hook("muc-occupant-pre-join", function(event)
         local room, stanza = event.room, event.stanza;
@@ -426,14 +426,14 @@ end, 101)
 
 -- when someone joins the room, we request a channel for them on the bridge
 -- (eventually we will also send a Jingle invitation - see handle_colibri...)
--- possibly we need to hook muc-occupant-session-new instead 
+-- possibly we need to hook muc-occupant-session-new instead
 -- for cases where a participant joins with twice
 module:hook("muc-occupant-joined", function (event)
         local room, nick, occupant = event.room, event.nick, event.occupant
         local stanza = occupant:get_presence()
         --local count = iterators.count(sessions[room.jid] or {})
         local count = count_capable_clients(room)
-		module:log("debug", "handle_join %s %s %s", 
+        module:log("debug", "handle_join %s %s %s",
                    tostring(room), tostring(nick), tostring(stanza))
 
         -- check client mmuc capabilities
@@ -447,9 +447,9 @@ module:hook("muc-occupant-joined", function (event)
         if count < focus_min_participants then return; end
 
         local bridge = roomjid2bridge[room.jid]
-        if not bridge then -- pick a bridge 
+        if not bridge then -- pick a bridge
             roomjid2bridge[room.jid] = pick_bridge(room.jid)
-            bridge = roomjid2bridge[room.jid] 
+            bridge = roomjid2bridge[room.jid]
         end
 
         module:log("debug", "room jid %s bridge %s", room.jid, bridge)
@@ -481,7 +481,7 @@ module:hook("muc-occupant-joined", function (event)
         -- anyone not currently in a session but capable of
         -- this includes people who sent session-terminate
         if not sessions[room.jid] then sessions[room.jid] = {}; end
-        for nick_, occupant_ in room:each_occupant() do 
+        for nick_, occupant_ in room:each_occupant() do
             if is_capable(occupant_) and not sessions[room.jid][nick_] then
                 pending[#pending+1] = nick_
             end
@@ -494,7 +494,7 @@ module:hook("muc-occupant-joined", function (event)
         module:send(confcreate);
 end, 2)
 
-local function remove_session(event) 
+local function remove_session(event)
         -- same here, remove conference when there are now
         -- less than the minimum required number of participants in the room
         -- optimization: keep the conference a little longer
@@ -502,7 +502,7 @@ local function remove_session(event)
         local room, nick = event.room, event.nick
 
         if sessions[room.jid] then
-            sessions[room.jid][nick] = nil 
+            sessions[room.jid][nick] = nil
         end
         local count = iterators.count(pairs(sessions[room.jid] or {}))
 
@@ -546,7 +546,7 @@ local function remove_session(event)
         -- we close those channels by setting their expire to 0
         local confid = roomjid2conference[room.jid]
         if jid2channels[room.jid] then
-            local channels = jid2channels[room.jid][nick] 
+            local channels = jid2channels[room.jid][nick]
             if channels then
                 local confupdate = st.iq({ from = encode_roomjid(room.jid), to = bridge, type = "set" })
                     :tag("conference", { xmlns = xmlns_colibri, id = confid })
@@ -564,7 +564,7 @@ local function remove_session(event)
         if count < focus_min_participants then -- not enough participants any longer
             -- ѕtart downgrade process
             if focus_linger_time > 0 then
-                module:add_timer(focus_linger_time, function () 
+                module:add_timer(focus_linger_time, function ()
                     destroy_conference(room)
                 end);
             else -- immediate destroy, default for now
@@ -588,7 +588,7 @@ module:hook("muc-occupant-pre-change", function (event)
     local nick = occupant.nick;
     if not participant2msids[room.jid] then return; end
     local msids = participant2msids[room.jid][nick]
-	if not msids then return; end
+    if not msids then return; end
 
     -- filter any mediastream mmuc tags
     stanza:maptags(function (tag)
@@ -646,7 +646,7 @@ local function add_video_description(stanza)
     end
 end
 
--- things we do when a room receives a COLIBRI stanza from the bridge 
+-- things we do when a room receives a COLIBRI stanza from the bridge
 module:hook("iq/host", function (event)
         local stanza = event.stanza
 
@@ -720,7 +720,7 @@ module:hook("iq/host", function (event)
             local occupant_jid = occupant.nick
             jid2channels[room.jid][occupant_jid] = {}
 
-            local bundlegroup = {} 
+            local bundlegroup = {}
 
             for content in conf:childtags("content", xmlns_colibri) do
                 module:log("debug", "  content name %s", content.attr.name)
@@ -804,7 +804,7 @@ module:hook("iq/host", function (event)
         -- if receive conference element with unknown ID, associate the room with this conference ID
 --        if not conference_array[confid] then
 --                conference_array[id] = stanza.attr.to; -- FIXME: test first to see if the room exists?
---        else 
+--        else
                 -- this is a conference we know about, what next?? ;-)
                 -- well, it seems we need to parse the <conference/> element;
                 -- thus we will inspect various channels in order to:
@@ -830,7 +830,7 @@ module:hook("iq/host", function (event)
 end, 2);
 
 -- process incoming Jingle stanzas from clients
-module:hook("iq/bare", function (event) 
+module:hook("iq/bare", function (event)
         local session, stanza = event.origin, event.stanza;
         local jingle = stanza:get_child("jingle", xmlns_jingle)
         if jingle == nil then return; end
@@ -974,7 +974,7 @@ module:hook("iq/bare", function (event)
                 pr:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid, audio = info.audio, video = info.video }):up()
             end
             sender:set_session(stanza.attr.from, pr)
-			local x = st.stanza("x", {xmlns = "http://jabber.org/protocol/muc#user";});
+            local x = st.stanza("x", {xmlns = "http://jabber.org/protocol/muc#user";});
             room:publicise_occupant_status(sender, x);
 
             return true;
@@ -982,7 +982,7 @@ module:hook("iq/bare", function (event)
 
         -- FIXME: there could be multiple msids per participant and content
         -- but we try to avoid that currently
-        local msids = {} 
+        local msids = {}
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 local sourcelist = {}
@@ -1007,10 +1007,10 @@ module:hook("iq/bare", function (event)
                 for group in description:childtags("ssrc-group", xmlns_jingle_rtp_ssma) do
                     module:log("debug", "group semantics %s", group.attr.semantics)
                     if group.attr.semantics == "FID" then
-                        sourcelist[#sourcelist+1] = group 
+                        sourcelist[#sourcelist+1] = group
                     end
                 end
-                sources[content.attr.name] = sourcelist 
+                sources[content.attr.name] = sourcelist
             end
         end
 
@@ -1028,7 +1028,7 @@ module:hook("iq/bare", function (event)
             --    pr:tag("source", { type = name, ssrc = source.attr.ssrc, direction = "sendrecv" }):up();
             --end
             sender:set_session(stanza.attr.from, pr)
-			local x = st.stanza("x", {xmlns = "http://jabber.org/protocol/muc#user";});
+            local x = st.stanza("x", {xmlns = "http://jabber.org/protocol/muc#user";});
             room:publicise_occupant_status(sender, x);
 
             participant2msids[room.jid][sender.nick] = msids
@@ -1146,7 +1146,7 @@ end, 3)
 -- subscribe to the pubsub node
 if focus_pubsub_service then
     -- wait until all hosts have been configured
-    module:add_timer(5, function () 
+    module:add_timer(5, function ()
         local sub = st.iq({ from = module:get_host(), to = focus_pubsub_service, type = "set" })
         sub:tag("pubsub", {xmlns = xmlns_pubsub})
           :tag("subscribe", {node = focus_pubsub_node, jid = module:get_host()}):up()

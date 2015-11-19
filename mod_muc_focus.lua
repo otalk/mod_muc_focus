@@ -595,15 +595,27 @@ module:hook("muc-occupant-pre-change", function (event)
     if not msids then return; end
 
     -- filter any mediastream mmuc tags
+    -- also filter any conf tags
     stanza:maptags(function (tag)
-        if not (tag.name == "mediastream" and tag.attr.xmlns == xmlns_mmuc) then
+        if not ((tag.name == "mediastream" or tag.name == "conf") and tag.attr.xmlns == xmlns_mmuc) then
             return tag
         end
     end);
 
-    -- stamp them onto it
+    -- stamp MSIDs onto it
     for msid, info in pairs(msids) do
         stanza:tag("mediastream", { xmlns = xmlns_mmuc, msid = msid, audio = info.audio, video = info.video }):up()
+    end
+
+    -- also retain the current <conf xmlns=xmlns_mmuc> element
+    -- TODO: do we want to store this in data structures?
+    local current_presence = occupant:get_presence()
+    if current_presence then
+        local caps = current_presence get_child("conf", xmlns_mmuc)
+        if caps then
+            stanza:add_child(caps)
+        end
+        -- FIXME: we also need to stamp the nick?
     end
 end, 2);
 

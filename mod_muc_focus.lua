@@ -610,11 +610,13 @@ module:hook("muc-occupant-pre-change", function (event)
     -- also retain the current <conf xmlns=xmlns_mmuc> element
     -- TODO: do we want to store this in data structures?
     local current_presence = occupant:get_presence()
-    local caps = current_presence get_child("conf", xmlns_mmuc)
-    if caps then
-        stanza:add_child(caps)
+    if current_presence then
+        local caps = current_presence get_child("conf", xmlns_mmuc)
+        if caps then
+            stanza:add_child(caps)
+        end
+        -- FIXME: we also need to stamp the nick?
     end
-    -- FIXME: we also need to stamp the nick?
 end, 2);
 
 

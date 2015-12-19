@@ -101,6 +101,12 @@ local participant2sources = {}
 -- all the msids
 local participant2msids = {}
 
+-- vp9 support
+local vp9support = {}
+
+-- rooms using VP9
+local vp9active = {}
+
 -- bridge associated with a room
 local roomjid2bridge = {}
 
@@ -306,6 +312,8 @@ local function cleanup_room(room)
     participant2sources[room.jid] = nil
     participant2msids[room.jid] = nil
     pending_create[room.jid] = nil
+    vp9active[room.jid] = nil
+    vp9support[room.jid] = nil
 end
 
 -- determines whether a participant is capable
@@ -326,6 +334,83 @@ local function count_capable_clients(room)
         end
     end
     return count
+end
+
+local function maybeToggleVP9Support(room, sender, supportsvp9)
+    local occupant = room:get_occupant_by_nick(sender.nick)
+    local usingvp9 = vp9active[room.jid] or false
+
+    if supportsvp9 ~= nil and not vp9support[room.jid] then
+        vp9support[room.jid] = {}
+    end
+    vp9support[room.jid][sender.nick] = supportsvp9
+
+    -- how should the stanza look like?
+    -- <message><preferredCodec payloadType="101"/></message>
+    --local mode = st.message({ from = room.jid, type = "groupchat" })
+    --mode:tag("preferredCodec", { xmlns = xmlns_mmuc, payloadType = "101" })
+    --room:broadcast_message(mode);
+
+    if supportsvp9 then
+        -- a client supporting VP9 joined
+        module:log("debug", "VP9: capable client joined %s", room.jid)
+
+        -- if all clients support VP9 we continue using VP9
+        if usingvp9 then
+            -- we just need to tell this client to use switch
+            -- from VP8 to VP9.
+            module:log("debug", "VP9: telling client to upgrade in %s", room.jid)
+            -- room:route_to_occupant(occupant, <please-upgrade-to-vp9/>)
+
+            -- TODO: can we determine this when sending the offer
+            --      and switch order of payload-types upfront?
+        elseif #vp9support[room.jid] == focus_min_participants then
+            -- the mininum number of clients has sessions
+            -- so we might upgrade to VP9
+            local support = 0
+            for i = 1, #vp9support do
+                if vp9support[i] then
+                    support = support + 1
+                end
+            end
+            if support == focus_min_participants then
+                -- and we know all of them support VP9
+                module:log("debug", "VP9: upgrading %s", room.jid)
+                -- room:broadcast_message(<please-upgrade-to-vp9/>);
+                vp9active[room.jid] = true
+            end
+        else
+            module:log("debug", "VP9: not upgrading %s", room.jid)
+        end
+    elseif supportsvp9 == false then
+        -- a client not supporting VP9 joined.
+        if usingvp9 then
+            -- downgrade to VP8 :-(
+            module:log("debug", "VP9: downgrading %s", room.jid)
+            -- room:broadcast_message(<please-downgrade-to-vp8/>);
+            vp9active[room.jid] = nil
+        end
+    else
+        -- when nil (client left) remove from table
+        if supportsvp9 == nil and #vp9support[room.jid] == 0 then
+            vp9support[room.jid] = nil
+        end
+        -- maybe we can update to VP9 now
+        if not usingvp9 then
+            local support = 0
+            for i = 1, #vp9support do
+                if vp9support[i] then
+                    support = support + 1
+                end
+            end
+            if support == #vp9support then
+                -- upgrade to VP9 :-)
+                module:log("debug", "VP9: upgrading %s", room.jid)
+                -- room:broadcast_message(<please-upgrade-to-vp9/>);
+                vp9active[room.jid] = true
+            end
+        end
+    end
 end
 
 -- terminate the jingle sessions,
@@ -1042,6 +1127,22 @@ module:hook("iq/bare", function (event)
                 sources[content.attr.name] = sourcelist
             end
         end
+
+        if action == "session-accept" then
+            -- determine VP9 support
+            local support = false
+            for content in jingle:childtags("content", xmlns_jingle) do
+                for description in content:childtags("description", xmlns_jingle_rtp) do
+                    for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
+                        if payload.attr.name == "VP9" then
+                            support = true
+                        end
+                    end
+                end
+            end
+            maybeToggleVP9Support(room, sender, support)
+        end
+
         module:log("debug", "confid %s", tostring(confid))
 
         if action == "session-accept" or action == "source-add" or action == "source-remove" then

@@ -49,6 +49,7 @@ local focus_media_bridge = module:get_option_string("focus_media_bridge");
 local focus_datachannels = module:get_option_boolean("focus_feature_datachannel", true);
 local usebundle = module:get_option_boolean("focus_feature_bundle", true);
 local usertx = module:get_option_boolean("focus_feature_rtx", false);
+local usevp9 = module:get_option_boolean("focus_feature_vp9", true); -- FIXME: default false
 
 -- a pubsub service and node to be subscribed for getting stats
 local focus_pubsub_service = module:get_option_string("focus_pubsub_service");
@@ -337,18 +338,18 @@ local function count_capable_clients(room)
 end
 
 local function maybeToggleVP9Support(room, sender, supportsvp9)
-    local occupant = room:get_occupant_by_nick(sender.nick)
     local usingvp9 = vp9active[room.jid] or false
 
     if supportsvp9 ~= nil and not vp9support[room.jid] then
         vp9support[room.jid] = {}
     end
-    vp9support[room.jid][sender.nick] = supportsvp9
+    if vp9support[room.jid] then
+        vp9support[room.jid][sender.nick] = supportsvp9
+    end
 
     -- how should the stanza look like?
-    -- <message><preferredCodec payloadType="101"/></message>
-    --local mode = st.message({ from = room.jid, type = "groupchat" })
-    --mode:tag("preferredCodec", { xmlns = xmlns_mmuc, payloadType = "101" })
+    -- <message><preferredCodec payloadType="101" content="video"/></message>
+    local mode = st.message({ from = room.jid, type = "groupchat" })
     --room:broadcast_message(mode);
 
     if supportsvp9 then
@@ -360,39 +361,48 @@ local function maybeToggleVP9Support(room, sender, supportsvp9)
             -- we just need to tell this client to use switch
             -- from VP8 to VP9.
             module:log("debug", "VP9: telling client to upgrade in %s", room.jid)
-            -- room:route_to_occupant(occupant, <please-upgrade-to-vp9/>)
+            mode:tag("preferredCodec", { xmlns = xmlns_mmuc, payloadType = "101", content = "video" })
+            room:route_to_occupant(room:get_occupant_by_nick(sender.nick), mode)
 
             -- TODO: can we determine this when sending the offer
             --      and switch order of payload-types upfront?
-        elseif #vp9support[room.jid] == focus_min_participants then
-            -- the mininum number of clients has sessions
-            -- so we might upgrade to VP9
-            local support = 0
-            for i = 1, #vp9support do
-                if vp9support[i] then
-                    support = support + 1
-                end
-            end
-            if support == focus_min_participants then
-                -- and we know all of them support VP9
-                module:log("debug", "VP9: upgrading %s", room.jid)
-                -- room:broadcast_message(<please-upgrade-to-vp9/>);
-                vp9active[room.jid] = true
-            end
         else
-            module:log("debug", "VP9: not upgrading %s", room.jid)
+            -- number of participants in room actually
+            local count = iterators.count(pairs(vp9support[room.jid]))
+            if count >= focus_min_participants then
+                -- the mininum number of clients has sessions
+                -- so we might upgrade to VP9
+                local support = 0
+                for nick, value in pairs(vp9support[room.jid]) do
+                    if value then
+                        support = support + 1
+                    end
+                end
+                if support == focus_min_participants then
+                    -- and we know all of them support VP9
+                    module:log("debug", "VP9: upgrading %s", room.jid)
+                    mode:tag("preferredCodec", { xmlns = xmlns_mmuc, payloadType = "101", content = "video" })
+                    room:broadcast_message(mode);
+                    vp9active[room.jid] = true
+                end
+            else
+                module:log("debug", "VP9: not upgrading %s since only %s out of %s support it", room.jid, tostring(support), tostring(count))
+            end
         end
     elseif supportsvp9 == false then
         -- a client not supporting VP9 joined.
         if usingvp9 then
             -- downgrade to VP8 :-(
             module:log("debug", "VP9: downgrading %s", room.jid)
-            -- room:broadcast_message(<please-downgrade-to-vp8/>);
+            mode:tag("preferredCodec", { xmlns = xmlns_mmuc, payloadType = "100", content = "video" })
+            room:broadcast_message(mode);
             vp9active[room.jid] = nil
+        else
+            module:log("debug", "VP9: not supported but not using")
         end
     else
         -- when nil (client left) remove from table
-        if supportsvp9 == nil and #vp9support[room.jid] == 0 then
+        if supportsvp9 == nil and vp9support[room.jid] and #vp9support[room.jid] == 0 then
             vp9support[room.jid] = nil
         end
         -- maybe we can update to VP9 now
@@ -406,7 +416,8 @@ local function maybeToggleVP9Support(room, sender, supportsvp9)
             if support == #vp9support then
                 -- upgrade to VP9 :-)
                 module:log("debug", "VP9: upgrading %s", room.jid)
-                -- room:broadcast_message(<please-upgrade-to-vp9/>);
+                mode:tag("preferredCodec", { xmlns = xmlns_mmuc, payloadType = "101", content = "video" })
+                room:broadcast_message(mode);
                 vp9active[room.jid] = true
             end
         end
@@ -731,14 +742,16 @@ local function add_video_description(stanza)
             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'goog-remb' }):up()
         :up()
-        :tag("payload-type", { id = "101", name = "VP9", clockrate = "90000" })
+    if usevp9 then
+        stanza:tag("payload-type", { id = "101", name = "VP9", clockrate = "90000" })
             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'ccm', subtype = 'fir' }):up()
             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack' }):up()
             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'nack', subtype = 'pli' }):up()
             :tag("rtcp-fb", { xmlns = xmlns_jingle_rtp_feedback, type = 'goog-remb' }):up()
         :up()
-        :tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
-        :tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
+    end
+    stanza:tag("payload-type", { id = "116", name = "red", clockrate = "90000" }):up()
+    stanza:tag("payload-type", { id = "117", name = "ulpfec", clockrate = "90000" }):up()
     if usertx then
         stanza:tag("payload-type", { id = "96", name = "rtx", clockrate = "90000" })
             :tag("parameter", { name = "apt", value = "100" }):up()
@@ -975,6 +988,7 @@ module:hook("iq/bare", function (event)
 
         if action == "session-terminate" then
             remove_session({room = room, nick = sender })
+            maybeToggleVP9Support(room, sender, nil)
             return
         end
 
@@ -1136,6 +1150,7 @@ module:hook("iq/bare", function (event)
                     for payload in description:childtags("payload-type", xmlns_jingle_rtp) do
                         if payload.attr.name == "VP9" then
                             support = true
+                            break
                         end
                     end
                 end

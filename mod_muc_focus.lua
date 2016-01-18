@@ -31,11 +31,9 @@ MUC domain...
 
 -- invoke various utilities
 local st = require "util.stanza";
-local jid  = require "util.jid";
-local config = require "core.configmanager";
+local jid = require "util.jid";
 local os_time = os.time;
 local difftime = os.difftime;
-local setmetatable = setmetatable;
 local jid_split = require "util.jid".split;
 --local host = module.get_host();
 
@@ -66,6 +64,7 @@ local focus_liveliness = module:get_option_number("focus_bridge_liveliness", 60)
 
 local iterators = require "util.iterators"
 local serialization = require "util.serialization"
+local hex = require "util.hex";
 
 -- define namespaces
 local xmlns_colibri = "http://jitsi.org/protocol/colibri";
@@ -116,37 +115,16 @@ local bridge_stats = {}
 -- for people joining while a conference is created
 local pending_create = {}
 
-local HEX = {"0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"};
-
-
-function byte_to_hex(byte)
-    local first = math.floor(byte / 16);
-    local second = byte - (first * 16);
-    return HEX[first + 1] .. HEX[second +1];
-end
-
-function hex_decode(hex)
-    return string.gsub(hex, "([0-9A-Fa-f][0-9A-Fa-f])", function (hex)
-        return string.char(tonumber(hex, 16));
-    end);
-end
-
-function hex_encode(bytes)
-    return string.gsub(bytes, "(.)", function (byte)
-        return byte_to_hex(byte:byte(1));
-    end);
-end
-
 
 -- base64 room jids to avoid unicode choking
-local function encode_roomjid(jid)
-    local node, host = jid_split(jid);
-    return host .. "/" .. hex_encode(node);
+local function encode_roomjid(room_jid)
+    local node, host = jid_split(room_jid);
+    return host .. "/" .. hex.to(node);
 end
 
-local function decode_roomjid(jid)
-    local node, host, res = jid_split(jid);
-    local room_name = hex_decode(res);
+local function decode_roomjid(room_jid)
+    local _, host, res = jid_split(room_jid);
+    local room_name = hex.from(res);
     return room_name.. "@" .. host;
 end
 
@@ -370,7 +348,7 @@ local function destroy_conference(room)
         :tag("conference", { xmlns = xmlns_colibri, id = confid })
     if jid2channels[room.jid] then
         for nick, occupant in room:each_occupant() do
-            channels = jid2channels[room.jid][nick]
+            local channels = jid2channels[room.jid][nick]
             if (channels) then
                 expire_channels(confupdate, channels, nick)
                 jid2channels[room.jid][nick] = nil
@@ -753,7 +731,7 @@ module:hook("iq/host", function (event)
                         add_video_description(initiate)
                     end
                     -- copy ssrcs
-                    for jid, sources in pairs(participant2sources[room.jid]) do
+                    for _, sources in pairs(participant2sources[room.jid]) do
                         if sources[content.attr.name] then
                             for i, source in ipairs(sources[content.attr.name]) do
                                 initiate:add_child(source)
@@ -894,9 +872,9 @@ module:hook("iq/bare", function (event)
             participant2msids[room.jid] = {}
         end
 
-        if action == "session-info" then
-            local msids = participant2msids[room.jid][sender.nick];
+        local msids = participant2msids[room.jid][sender.nick] or {};
 
+        if action == "session-info" then
             for muted in jingle:childtags("mute", xmlns_jingle_rtp_info) do
                 local mediastream_specified = false;
                 for mediastream in jingle:childtags("mediastream", xmlns_mmuc) do
@@ -998,7 +976,8 @@ module:hook("iq/bare", function (event)
 
         -- there could be multiple msids per participant and content
         -- we tried to avoid that but then did it which caused quite a number of weird bugs.
-        local msids = participant2msids[room.jid][sender.nick] or {}
+        msids = participant2msids[room.jid][sender.nick] or {}
+
         for content in jingle:childtags("content", xmlns_jingle) do
             for description in content:childtags("description", xmlns_jingle_rtp) do
                 local sourcelist = {}
@@ -1182,4 +1161,4 @@ if focus_pubsub_service then
     end)
 end
 
-log("info", "mod_muc_focus loaded");
+module:log("info", "mod_muc_focus loaded");

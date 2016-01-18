@@ -611,7 +611,7 @@ module:hook("muc-occupant-pre-change", function (event)
     -- TODO: do we want to store this in data structures?
     local current_presence = occupant:get_presence()
     if current_presence then
-        local caps = current_presence get_child("conf", xmlns_mmuc)
+        local caps = current_presence:get_child("conf", xmlns_mmuc)
         if caps then
             stanza:add_child(caps)
         end

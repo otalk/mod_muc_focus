@@ -847,14 +847,17 @@ module:hook("iq/bare", function (event)
         -- and stanzas not addressed to the rooms bare jid
         local room = jid2room[roomjid]
         if not room then
-            if action == "session-terminate" then
-                module:log("debug", "session-terminate while room is dead already, ignoring")
-                return
-            end
+            module:log("debug", "Received jingle action while conference is dead, ignoring")
+            return
         end
         local confid = roomjid2conference[room.jid]
         local sender = room:get_occupant_by_real_jid(stanza.attr.from)
         local bridge = roomjid2bridge[room.jid]
+
+        if not sender then
+            module:log("debug", "Received jingle action from user not in the room, ignoring")
+            return
+        end
 
         -- iterate again to look at the SSMA source elements
         -- FIXME: only for session-accept and source-add / source-remove?

@@ -1085,17 +1085,20 @@ module:hook("iq/bare", function (event)
                   should_remove[source.attr.ssrc] = true
                 end
 
-                local sources_of_name = participant2sources[room.jid][sender.nick][name] or {}
-                for i=#sources_of_name,1,-1 do
-                  local source = participant2sources[room.jid][sender.nick][name][i]
-                  if should_remove[source.attr.ssrc] then
-                    table.remove(participant2sources[room.jid][sender.nick][name], i)
-                    module:log("debug", "Removed source with ssrc %s from participant2sources, new size: %d", source.attr.ssrc, #sources_of_name)
-                  end --End if should_remove
-                end --End iterating through array
+                local current_sources_of_name = participant2sources[room.jid][sender.nick][name] or {}
+                local new_sources_of_name = {};
 
+                for i, source in ipairs(current_sources_of_name) do
+                  if not should_remove[source.attr.ssrc] then
+                    new_sources_of_name[#new_sources_of_name + 1] = source
+                  else
+                    module:log("debug", "Removed source with ssrc %s from participant2sources for %s", source.attr.ssrc, sender.nick)
+                  end --End if should_remove
+                end --End iterating through current_sources_of_name
+                participant2sources[room.jid][sender.nick][name] = new_sources_of_name;
+                module:log("debug", "participant2sources %s now of size %d", name, #new_sources_of_name)
               end --End for name, sourcelist
-            end --End else            
+            end --End else           
 
             -- sent to everyone but the sender
             if sessions[room.jid] then

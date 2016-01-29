@@ -999,7 +999,7 @@ module:hook("iq/bare", function (event)
                             elseif action == "source-remove" and msids[msid] then
                                 msids[msid][description.attr.media] = nil
                                 if #msids[msid] == 0 then
-                                    msids[msid] = nil 
+                                    msids[msid] = nil
                                 end
                             end
                         end
@@ -1042,8 +1042,6 @@ module:hook("iq/bare", function (event)
 
             participant2msids[room.jid][sender.nick] = msids
 
-            -- FIXME handle updates and removals
-            participant2sources[room.jid][sender.nick] = sources
             local sid = roomjid2conference[room.jid] -- uses the id from the bridge
             local sendaction = "source-add"
             if action == "source-remove" then
@@ -1061,6 +1059,46 @@ module:hook("iq/bare", function (event)
                     sourceadd:up() -- description
                 :up() -- content
             end
+
+            -- update the participant2sources
+            if sendaction ~= "source-remove" then
+              -- If not a source remove, assume accept or add. Add the sources to participant2sources
+              for name, sourcelist in pairs(sources) do
+                module:log("debug", "Source add or accept, adding sources of type %s to participant2sources", name)
+                if participant2sources[room.jid][sender.nick][name] == nil then
+                  participant2sources[room.jid][sender.nick][name] = {}
+                end
+                for i, source in ipairs(sourcelist) do
+                  local sources_of_name = participant2sources[room.jid][sender.nick][name];
+                  local next_index = #sources_of_name + 1;
+                  module:log("debug", "Mapping source %s at index %d for participant %s", source.attr.ssrc, next_index, sender.nick)
+                  participant2sources[room.jid][sender.nick][name][next_index] = source
+                end
+              end
+            else -- Source remove
+              for name, sourcelist in pairs(sources) do
+                module:log("debug", "Source remove, removing sources of type %s from participant2sources", name)
+                -- Get the ssrcs we need to remove
+                local should_remove = {};
+                for i, source in ipairs(sourcelist) do
+                  module:log("debug", "Source remove source with ssrc %s from participant2sources", source.attr.ssrc)
+                  should_remove[source.attr.ssrc] = true
+                end
+
+                local current_sources_of_name = participant2sources[room.jid][sender.nick][name] or {}
+                local new_sources_of_name = {};
+
+                for i, source in ipairs(current_sources_of_name) do
+                  if not should_remove[source.attr.ssrc] then
+                    new_sources_of_name[#new_sources_of_name + 1] = source
+                  else
+                    module:log("debug", "Removed source with ssrc %s from participant2sources for %s", source.attr.ssrc, sender.nick)
+                  end --End if should_remove
+                end --End iterating through current_sources_of_name
+                participant2sources[room.jid][sender.nick][name] = new_sources_of_name;
+                module:log("debug", "participant2sources %s now of size %d", name, #new_sources_of_name)
+              end --End for name, sourcelist
+            end --End else           
 
             -- sent to everyone but the sender
             if sessions[room.jid] then

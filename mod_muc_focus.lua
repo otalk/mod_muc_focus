@@ -1047,13 +1047,19 @@ module:hook("iq/bare", function (event)
             if action == "source-remove" then
                 sendaction = "source-remove"
             end
+
             local sourceadd = st.iq({ from = room.jid, type = "set" })
                 :tag("jingle", { xmlns = xmlns_jingle, action = sendaction, initiator = room.jid, sid = sid })
+
+            -- Count of sources added or removed
+            local sourcesaddedorremoved = 0
+
             for name, sourcelist in pairs(sources) do
                 sourceadd:tag("content", { creator = "initiator", name = name, senders = "both" })
                     :tag("description", { xmlns = xmlns_jingle_rtp, media = name })
                     for i, source in ipairs(sourcelist) do
                         sourceadd:add_child(source)
+                        sourcesaddedorremoved = sourcesaddedorremoved + 1
                     end
 
                     sourceadd:up() -- description
@@ -1101,7 +1107,7 @@ module:hook("iq/bare", function (event)
             end --End else
 
             -- sent to everyone but the sender
-            if sessions[room.jid] then
+            if sessions[room.jid] and sourcesaddedorremoved > 0 then
                 for occupant_jid in iterators.keys(participant2sources[room.jid]) do
                     if occupant_jid ~= sender.nick and sessions[room.jid][occupant_jid] then
                         module:log("debug", "send %s to %s", sendaction, tostring(occupant_jid))

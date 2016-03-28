@@ -988,7 +988,7 @@ module:hook("iq/bare", function (event)
                     -- note those and add the msid to the participants presence
                     for parameter in source:childtags("parameter", xmlns_jingle_rtp_ssma) do
                         if parameter.attr.name == "msid" then
-                            local msid = string.match(parameter.attr.value, "[a-zA-Z0-9]+") -- FIXME: token-char
+                            local msid = string.match(parameter.attr.value, "[a-zA-Z0-9%-]+") -- FIXME: token-char
                             -- second part is the track
                             module:log("debug", "msid %s content %s action %s", msid, content.attr.name, action)
                             if action == "session-accept" or action == "source-add" then
@@ -1098,7 +1098,7 @@ module:hook("iq/bare", function (event)
                 participant2sources[room.jid][sender.nick][name] = new_sources_of_name;
                 module:log("debug", "participant2sources %s now of size %d", name, #new_sources_of_name)
               end --End for name, sourcelist
-            end --End else           
+            end --End else
 
             -- sent to everyone but the sender
             if sessions[room.jid] then
